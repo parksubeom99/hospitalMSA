@@ -1,0 +1,64 @@
+server:
+  port: 8180
+
+spring:
+  application:
+    name: gateway-service
+  cloud:
+    gateway:
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+      globalcors:
+        cors-configurations:
+          "[/**]":
+            allowedOrigins:
+              - "${GATEWAY_ALLOWED_ORIGIN:http://localhost:3000}"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - PATCH
+              - DELETE
+              - OPTIONS
+            allowedHeaders:
+              - "*"
+            allowCredentials: true
+      routes:
+        - id: iam-service
+          uri: ${IAM_SERVICE_URL:http://localhost:8181}
+          predicates:
+            - Path=/api/auth/**,/api/audit/**
+          filters:
+            - RewritePath=/api/(?<segment>.*), /${segment}
+
+        - id: admin-master-service
+          uri: ${ADMIN_SERVICE_URL:http://localhost:8182}
+          predicates:
+            - Path=/api/admin/**,/api/master/**
+          filters:
+            - RewritePath=/api/(?<segment>.*), /${segment}
+
+        - id: clinical-service
+          uri: ${CLINICAL_SERVICE_URL:http://localhost:8183}
+          predicates:
+            # Phase 2: /api/clinical/visit-status/** 추가
+            - Path=/api/emr/**,/api/orders/**,/api/final-orders/**,/api/encounters/**,/api/results/**,/api/clinical/**
+          filters:
+            - RewritePath=/api/(?<segment>.*), /${segment}
+
+        - id: support-service
+          uri: ${SUPPORT_SERVICE_URL:http://localhost:8184}
+          predicates:
+            - Path=/api/worklist/**,/api/lab-results/**,/api/radiology-reports/**,/api/procedure-reports/**,/api/injections/**,/api/med-execs/**,/api/endoscopy-reports/**,/api/support/**
+          filters:
+            - RewritePath=/api/(?<segment>.*), /${segment}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+his:
+  jwt:
+    secret: ${HIS_JWT_SECRET:CHANGE_ME_LOCAL_SECRET_CHANGE_ME_LOCAL_SECRET}

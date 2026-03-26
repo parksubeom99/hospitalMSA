@@ -1,0 +1,30 @@
+# ===== Node / Next.js =====
+node_modules/
+.next/
+out/
+
+# ===== Build caches =====
+.turbo/
+*.tsbuildinfo
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Env =====
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ===== OS / IDE =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ===== Accidental backend artifacts (keep archived version under docs if needed) =====
+.gradle/
+bin/
+build/
+target/

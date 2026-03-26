@@ -1,0 +1,50 @@
+# ============================================================
+# psbMSA 프로젝트 루트 .gitignore
+# ============================================================
+
+# ── 환경변수 (민감정보) ──────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+# 예시 파일은 커밋 허용
+!.env.example
+!.env.production.example
+
+# ── Docker ──────────────────────────────────────────────────
+# 볼륨 데이터는 커밋하지 않음 (자동 생성)
+
+# ── Spring Boot / Gradle ────────────────────────────────────
+csBackend/**/build/
+csBackend/**/.gradle/
+csBackend/**/out/
+csBackend/**/*.class
+csBackend/**/*.jar
+csBackend/**/*.war
+HELP.md
+
+# ── Next.js ─────────────────────────────────────────────────
+csFrontend/.next/
+csFrontend/out/
+csFrontend/node_modules/
+csFrontend/.yarn/cache/
+csFrontend/.pnp.*
+
+# ── IDE ─────────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# ── OS ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 로그 ─────────────────────────────────────────────────────
+*.log
+logs/
