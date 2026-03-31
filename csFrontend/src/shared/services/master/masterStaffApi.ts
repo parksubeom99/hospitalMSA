@@ -1,4 +1,5 @@
-export * from "../master/masterStaffApi";
+// [REMOVED] export * from "../master/masterStaffApi"
+// 이유: 자기 자신을 re-export하는 순환 참조 제거 (번들러 경고/무한 해석 위험)
 import { API_BASES } from "@/shared/config/api";
 import { apiFetchWithAuth } from "@/shared/services/authApi";
 import type { StaffProfile } from "@/shared/types/domain";

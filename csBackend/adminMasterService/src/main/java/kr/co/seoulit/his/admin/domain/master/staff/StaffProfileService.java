@@ -7,6 +7,7 @@ import kr.co.seoulit.his.admin.domain.master.staff.dto.StaffUpsertRequest;
 import kr.co.seoulit.his.admin.domain.master.staff.dto.StaffUpdateRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,7 +26,10 @@ public class StaffProfileService {
 
     @Transactional(readOnly = true)
     public List<StaffResponse> list() {
-        return repo.findAll().stream().map(this::toResponse).toList();
+        // [MODIFIED] findAll() → findAll(Sort) — staffProfileId 오름차순 정렬
+        // Oracle은 정렬 없이 조회 시 내부 저장 순서 반환 → ID 순서 보장 안됨
+        return repo.findAll(Sort.by(Sort.Direction.ASC, "staffProfileId"))
+                .stream().map(this::toResponse).toList();
     }
 
     // 조회 표준화(검색/페이징/정렬)

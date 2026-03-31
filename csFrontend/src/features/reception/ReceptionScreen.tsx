@@ -5,7 +5,7 @@ import { GlassCard } from "@/shared/components/GlassCard";
 import { RoleGate } from "@/shared/components/RoleGate";
 import { StatusBadge } from "@/shared/components/StatusBadge";
 import { useHospital } from "@/shared/store/HospitalStore";
-import { formatDateTime } from "@/shared/lib/date";
+import { formatDateTime, nowDateTimeRounded } from "@/shared/lib/date";
 import { formatRrnMasked, maskName, maskPhone } from "@/shared/lib/masking";
 import { STATUS_LABEL } from "@/shared/config/constants";
 import type { VisitStatus } from "@/shared/types/domain";
@@ -37,12 +37,16 @@ export function ReceptionScreen() {
     setEmergencyCount,
   } = useHospital() as any;
 
-  const [serverWriteEnabled, setServerWriteEnabled] = useState(false);
+  // [MODIFIED] 체크박스 제거 → 세션 accessToken 존재 시 자동으로 실서버 저장 모드 활성화
+  // useState(false) + setServerWriteEnabled 제거 — 세션 기반 const로 단순화
+  const serverWriteEnabled = !!state.session?.accessToken; // [MODIFIED]
 
   const [tab, setTab] = useState<ReceptionTab>("RESERVATION");
   const [toast, setToast] = useState("");
 
-  const [reservationForm, setReservationForm] = useState({ name: "", phone: "", reservedAt: "2026-03-11T10:30" });
+  // [MODIFIED] 예약 날짜 기본값 → 오늘 날짜 기반 (30분 단위 올림)
+  // 이유: 고정값 "2026-03-11T10:30"은 과거 날짜 → 과거 예약 방지
+  const [reservationForm, setReservationForm] = useState({ name: "", phone: "", reservedAt: nowDateTimeRounded() });
   const [editingReservationId, setEditingReservationId] = useState<number | null>(null);
 
   const activeReservations = useMemo(
@@ -88,7 +92,7 @@ export function ReceptionScreen() {
 
   const resetReservationForm = () => {
     setEditingReservationId(null);
-    setReservationForm({ name: "", phone: "", reservedAt: "2026-03-11T10:30" });
+    setReservationForm({ name: "", phone: "", reservedAt: nowDateTimeRounded() });
   };
 
   const resetVisitForm = () => {
@@ -236,6 +240,14 @@ export function ReceptionScreen() {
           subtitle="원무/시스템관리자 전용 · 예약 / 대기 / 응급"
           right={<StatusBadge label={`총 인원 ${capacity.current}/30`} tone={capacity.level === "SAFE" ? "green" : capacity.level === "WARN" ? "orange" : "red"} />}
         >
+          {/* [ADDED] 실서버 저장 모드 상태 표시 — 세션 기반 자동 결정 */}
+          <div className="inline-check-group" style={{ marginBottom: 8 }}>
+            {serverWriteEnabled
+              ? <small className="muted">실서버 저장 모드 활성 (IAM 로그인됨)</small>
+              : <small className="muted">데모 모드 (실서버 저장 비활성)</small>
+            }
+          </div>
+
           <div className="tab-row">
             {[{ key: "RESERVATION", label: "예약" }, { key: "WAITING", label: "대기" }, { key: "EMERGENCY", label: "응급" }].map((t) => (
               <button key={t.key} className={`tab-btn ${tab === t.key ? "is-active" : ""}`} onClick={() => setTab(t.key as ReceptionTab)} type="button">{t.label}</button>
@@ -248,7 +260,7 @@ export function ReceptionScreen() {
                 <div className="form-grid tri">
                   <label><span>이름</span><input value={reservationForm.name} onChange={(e) => setReservationForm((s) => ({ ...s, name: e.target.value }))} /></label>
                   <label><span>전화번호</span><div className="phone-split"><input value="010" readOnly /><input ref={reservationPhoneMidRef} inputMode="numeric" maxLength={4} value={reservationPhoneParts.mid} onChange={(e) => { const v = e.target.value; setReservationForm((s) => ({ ...s, phone: joinPhone(v, splitPhone(s.phone).last) })); if (digitsOnly(v).length >= 4) reservationPhoneLastRef.current?.focus(); }} placeholder="1234" /><input ref={reservationPhoneLastRef} inputMode="numeric" maxLength={4} value={reservationPhoneParts.last} onChange={(e) => setReservationForm((s) => ({ ...s, phone: joinPhone(splitPhone(s.phone).mid, e.target.value) }))} placeholder="5678" /></div></label>
-                  <label><span>예약시간대</span><input type="datetime-local" value={reservationForm.reservedAt} onChange={(e) => setReservationForm((s) => ({ ...s, reservedAt: e.target.value }))} /></label>
+                  <label><span>예약시간대</span><input type="datetime-local" value={reservationForm.reservedAt} min={nowDateTimeRounded().slice(0, 16)} onChange={(e) => setReservationForm((s) => ({ ...s, reservedAt: e.target.value }))} /></label>
                 </div>
                 <div className="button-row">
                   <button type="button" className="primary-btn" onClick={handleReservationSave} disabled={!capacity.canRegister && !editingReservationId}>{editingReservationId ? "예약 수정" : "예약 등록"}</button>

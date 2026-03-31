@@ -69,8 +69,12 @@ function toStaffProfile(form: FormState): StaffProfile {
 
 export function MasterSettingsScreen() {
   const { state, upsertStaff, removeStaff } = useHospital();
-  const [serverMode, setServerMode] = useState(false);
-  const [autoSync, setAutoSync] = useState(false);
+  // [MODIFIED] serverMode, autoSync 상태 제거 → 세션 기반 자동 결정
+  // 실서버 로그인(isServerSession) 시 자동으로 서버 모드 활성화
+  // 자동 동기화 ON/OFF 토글 제거 → "직원 동기화" 버튼 1개로 단순화
+  // [FIX] isServerSession 선언을 serverMode 위로 이동 — TDZ(Block-scoped variable used before declaration) 해소
+  const isServerSession = state.session?.authSource === "server";
+  const serverMode = isServerSession;
   const [serverBusy, setServerBusy] = useState(false);
   const [serverLastSyncAt, setServerLastSyncAt] = useState<string>("");
   const [jobFilter, setJobFilter] = useState<"ALL" | "DOCTOR" | "ADMIN">("ALL");
@@ -100,44 +104,18 @@ export function MasterSettingsScreen() {
     window.setTimeout(() => setMessage(""), 2600);
   };
 
-  const isServerSession = state.session?.authSource === "server";
+  // [REMOVED] toggleServerMode, toggleAutoSync 제거
+  // serverMode = isServerSession (세션 기반 자동 결정)
 
-  const toggleServerMode = () => {
-    if (!serverMode && !isServerSession) {
-      emit("실서버 CRUD는 IAM 실로그인 세션에서만 사용할 수 있습니다.");
-      return;
-    }
-    const next = !serverMode;
-    setServerMode(next);
-    // [FIX] serverMode OFF 전환 시 서버 관련 상태 초기화
-    if (!next) {
-      setServerStaff([]);
-      serverStaffIdsRef.current = new Set();
-      syncedRef.current = false;
-      setAutoSync(false);
-    }
-  };
-
-  const toggleAutoSync = () => {
-    if (!autoSync && !isServerSession) {
-      emit("자동 동기화는 IAM 실로그인 세션에서만 사용할 수 있습니다.");
-      return;
-    }
-    setAutoSync((v) => !v);
-  };
-
-  // [FIX] syncFromServer — 서버 목록을 serverStaff에만 저장
-  //       로컬 state.staff에 upsertStaff 반복 호출 제거 (중복 생성 원인)
+  // [MODIFIED] syncFromServer — 서버 목록을 serverStaff에만 저장
   const syncFromServer = async () => {
     if (!isServerSession) {
       emit("실서버 동기화는 IAM 실로그인 후 사용해주세요.");
-      setAutoSync(false);
       return;
     }
     setServerBusy(true);
     try {
       const list = await listMasterStaffServer();
-      // [FIX] active=true인 직원만 목록에 표시 (비활성화된 직원 제외)
       const activeList = list.filter((x) => x.active !== false);
       setServerStaff(activeList);
       serverStaffIdsRef.current = new Set(activeList.map((x) => x.staffId));
@@ -151,25 +129,16 @@ export function MasterSettingsScreen() {
     }
   };
 
-  // [FIX] 세션 없으면 실서버 모드 강제 해제
+  // [MODIFIED] 세션 변경 시 서버 관련 상태 초기화 (serverMode 상태 제거로 단순화)
   useEffect(() => {
     if (!isServerSession) {
-      setServerMode(false);
-      setAutoSync(false);
       setServerStaff([]);
       serverStaffIdsRef.current = new Set();
       syncedRef.current = false;
     }
   }, [isServerSession]);
 
-  // [FIX] autoSync: serverMode ON + autoSync ON + 세션 있을 때만 1회 동기화
-  //       의존성에서 syncFromServer 제거하여 무한 루프 방지
-  useEffect(() => {
-    if (serverMode && autoSync && isServerSession) {
-      void syncFromServer();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverMode, autoSync, isServerSession]);
+  // [REMOVED] autoSync useEffect 제거 — 버튼 클릭으로만 동기화
 
   const setJobType = (jobType: "DOCTOR" | "ADMIN") => {
     setForm((f) => ({
@@ -277,15 +246,14 @@ export function MasterSettingsScreen() {
       <div className="page-grid page-grid--readable">
         <GlassCard title="마스터 설정" subtitle="의사/원무 직원 프로필 조회·등록·수정·삭제 (사진/MinIO는 후속)">
           <div className="button-row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
-            <button type="button" className={serverMode ? "active-btn" : ""} onClick={toggleServerMode}>
-              {serverMode ? "실서버 CRUD 모드 ON" : "실서버 CRUD 모드 OFF"}
-            </button>
-            <button type="button" className={autoSync ? "active-btn" : ""} onClick={toggleAutoSync}>
-              자동 동기화 {autoSync ? "ON" : "OFF"}
-            </button>
+            {/* [MODIFIED] 실서버 CRUD 토글 + 자동동기화 토글 제거 → 직원 동기화 버튼 1개 */}
+            {/* serverMode = isServerSession 자동 결정 */}
             <button type="button" onClick={() => void syncFromServer()} disabled={serverBusy}>직원 동기화</button>
             {serverBusy && <span className="inline-muted">동기화/저장 중...</span>}
-            {!isServerSession && <span className="inline-muted">현재 세션: 데모 로그인</span>}
+            {serverMode
+              ? <span className="inline-muted">실서버 CRUD 모드 활성</span>
+              : <span className="inline-muted">현재 세션: 데모 로그인</span>
+            }
             {!!serverLastSyncAt && <span className="inline-muted">최근 동기화: {serverLastSyncAt}</span>}
           </div>
           <div className="split-grid">

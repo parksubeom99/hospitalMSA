@@ -29,6 +29,10 @@ dependencies {
     // [CHANGED] Flyway (Clinical DB migration)
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-mysql'
+    // [ADDED] Oracle JDBC 드라이버
+    implementation 'com.oracle.database.jdbc:ojdbc11:23.3.0.23.09'
+    // [ADDED] Flyway Oracle 지원 모듈 (Flyway 10+)
+    implementation 'org.flywaydb:flyway-database-oracle'
 
     runtimeOnly 'com.mysql:mysql-connector-j'
 

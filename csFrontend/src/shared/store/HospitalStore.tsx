@@ -64,12 +64,14 @@ const MOCK_ACCOUNTS = [
 ];
 
 function createSeedState(): HospitalState {
-  const baseDate = new Date();
-  baseDate.setHours(9, 0, 0, 0);
+  // [MODIFIED] new Date() → 고정 날짜 문자열
+  // 이유: SSR(서버) 실행 시각 ≠ CSR(클라이언트) hydration 시각 → React #425/#418/#423 hydration mismatch
+  // 해결: seed 데이터는 고정 ISO 문자열 사용, 런타임 now()는 액션 시점에만 호출
+  const SEED_DATE = "2026-01-15";
   const at = (h: number, m: number) => {
-    const d = new Date(baseDate);
-    d.setHours(h, m, 0, 0);
-    return d.toISOString();
+    const hh = String(h).padStart(2, "0");
+    const mm = String(m).padStart(2, "0");
+    return `${SEED_DATE}T${hh}:${mm}:00.000Z`;
   };
   return {
     session: null,
@@ -125,6 +127,10 @@ interface ActionResult {
 }
 
 interface HospitalContextValue {
+  // [ADDED] hydrated: localStorage 복원 완료 여부
+  // SSR(false) → client useEffect 완료(true)
+  // RoleGate가 이 값을 보고 hydration 전 렌더를 억제 → #418/#423/#425 해소
+  hydrated: boolean;
   state: HospitalState;
   capacity: CapacitySummary;
   medicationCatalog: MedicationCatalogItem[];
@@ -175,6 +181,9 @@ function buildCapacity(state: HospitalState): CapacitySummary {
 
 export function HospitalProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<HospitalState>(createSeedState);
+  // [ADDED] hydrated: localStorage 복원 완료 플래그
+  // 초기값 false → 첫 번째 useEffect(localStorage 복원) 완료 후 true
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     try {
@@ -201,6 +210,10 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       }
     } catch {
       // ignore malformed local state
+    } finally {
+      // [ADDED] localStorage 복원 시도 완료 (성공/실패 무관) → hydrated=true
+      // 이 시점부터 RoleGate가 실제 session 기반으로 렌더링 허용
+      setHydrated(true);
     }
   }, []);
 
@@ -246,6 +259,7 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
   };
 
   const value: HospitalContextValue = {
+    hydrated, // [ADDED]
     state,
     capacity,
     medicationCatalog: MEDICATION_CATALOG,

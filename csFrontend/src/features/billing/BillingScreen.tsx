@@ -24,8 +24,10 @@ export function BillingScreen() {
     return withFinalOrder[0] ?? state.visits[0]?.id ?? 0;
   });
   const [message, setMessage] = useState("");
-  const [serverWriteEnabled, setServerWriteEnabled] = useState(false);
-  const [serverSyncEnabled, setServerSyncEnabled] = useState(false);
+  // [MODIFIED] 체크박스 2개 → 동기화 버튼 1개로 단순화
+  // 실서버 저장/결제: 세션 accessToken 존재 시 자동 활성화
+  const serverWriteEnabled = !!state.session?.accessToken;
+  // serverSyncEnabled 상태 제거
   const [syncLoading, setSyncLoading] = useState(false);
   const [serverSyncedAt, setServerSyncedAt] = useState<string | null>(null);
   const [serverInvoices, setServerInvoices] = useState<BackendInvoice[]>([]);
@@ -69,11 +71,7 @@ export function BillingScreen() {
     }
   };
 
-  useEffect(() => {
-    if (!serverSyncEnabled || !visitId) return;
-    void syncBillingFromServer();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverSyncEnabled, visitId]);
+  // [REMOVED] serverSyncEnabled useEffect 제거 — 버튼 클릭으로만 동기화
 
   const handleGenerateInvoice = async () => {
     try {
@@ -149,15 +147,9 @@ export function BillingScreen() {
         <GlassCard title="수납" subtitle="최종오더 결과 기반 영수증 자동 산출 / 결제 처리">
           <div className="form-grid tri">
             <div className="inline-check-group" style={{ gridColumn: "1 / -1" }}>
-              <label className={`pill-check ${serverWriteEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverWriteEnabled} onChange={(e) => setServerWriteEnabled(e.target.checked)} />
-                <span>실서버 저장/결제 모드</span>
-              </label>
-              <label className={`pill-check ${serverSyncEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverSyncEnabled} onChange={(e) => setServerSyncEnabled(e.target.checked)} />
-                <span>실서버 동기화 모드</span>
-              </label>
+              {/* [MODIFIED] 체크박스 2개 → 동기화 버튼 1개 */}
               <button type="button" onClick={() => void syncBillingFromServer()} disabled={syncLoading}>동기화 실행</button>
+              {serverWriteEnabled && <small className="muted">실서버 저장/결제 모드 활성</small>}
               {serverSyncedAt && <small className="muted">최근 동기화: {serverSyncedAt}</small>}
             </div>
 

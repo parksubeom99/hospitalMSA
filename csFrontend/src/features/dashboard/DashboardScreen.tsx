@@ -14,11 +14,10 @@ export function DashboardScreen() {
   const { state, capacity, patientsById } = useHospital();
 
   const [useServerSummary, setUseServerSummary] = useState(false);
-  const [autoSyncServer, setAutoSyncServer] = useState(false);
-
+  // [MODIFIED] autoSyncServer 제거 — 자동 동기화 토글 불필요, 버튼 클릭으로만 동기화
   const dashboardSummaryQuery = useDashboardSummaryQuery({
     enabled: useServerSummary,
-    refetchInterval: useServerSummary && autoSyncServer ? 30_000 : false,
+    refetchInterval: false, // [MODIFIED] 자동 갱신 제거 → 집계 동기화 버튼 클릭으로만
   });
 
   const serverSummary = dashboardSummaryQuery.data ?? null;
@@ -113,9 +112,7 @@ export function DashboardScreen() {
           <button className="btn ghost" type="button" onClick={() => void syncServerSummary()} disabled={syncing}>
             {syncing ? "동기화 중..." : "집계 동기화"}
           </button>
-          <button className="btn ghost" type="button" onClick={() => setAutoSyncServer((v) => !v)}>
-            {autoSyncServer ? "자동 동기화 ON" : "자동 동기화 OFF"}
-          </button>
+          {/* [REMOVED] 자동 동기화 ON/OFF 버튼 제거 → 집계 동기화 버튼으로 통일 */}
           {serverSummary?.generatedAt && (
             <span className="helper-text">서버 집계시각: {formatDateTime(serverSummary.generatedAt)}</span>
           )}
