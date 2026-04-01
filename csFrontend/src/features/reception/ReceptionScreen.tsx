@@ -10,6 +10,7 @@ import { formatRrnMasked, maskName, maskPhone } from "@/shared/lib/masking";
 import { STATUS_LABEL } from "@/shared/config/constants";
 import type { VisitStatus } from "@/shared/types/domain";
 import { cancelVisitServer, checkInReservationServer, createReservationServer, createVisitServer, updateVisitServer, upsertPatientForReception } from "@/shared/services/receptionMutationApi";
+import { useReservationsQuery, useVisitsQuery } from "@/shared/services/reception/receptionQueries"; // [ADDED]
 
 type ReceptionTab = "RESERVATION" | "WAITING" | "EMERGENCY";
 
@@ -40,6 +41,10 @@ export function ReceptionScreen() {
   // [MODIFIED] 체크박스 제거 → 세션 accessToken 존재 시 자동으로 실서버 저장 모드 활성화
   // useState(false) + setServerWriteEnabled 제거 — 세션 기반 const로 단순화
   const serverWriteEnabled = !!state.session?.accessToken; // [MODIFIED]
+
+  // [ADDED] React Query — enabled:false 기본값, 버튼 클릭 시 refetch() 가능
+  const reservationsQuery = useReservationsQuery();
+  const visitsQuery = useVisitsQuery();
 
   const [tab, setTab] = useState<ReceptionTab>("RESERVATION");
   const [toast, setToast] = useState("");

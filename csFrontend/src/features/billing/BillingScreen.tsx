@@ -7,7 +7,8 @@ import { useHospital } from "@/shared/store/HospitalStore";
 import { formatCurrency } from "@/shared/lib/format";
 import { STATUS_LABEL } from "@/shared/config/constants";
 import { buildInvoiceItems, totalAmount } from "@/shared/lib/price";
-import { createInvoiceServer, listInvoicesServer, payInvoiceServer, type BackendInvoice } from "@/shared/services/billingApi";
+import { createInvoiceServer, payInvoiceServer, type BackendInvoice } from "@/shared/services/billingApi";
+import { useInvoicesQuery } from "@/shared/services/billing/billingQueries"; // [ADDED]
 
 function backendInvoiceStatusLabel(status?: string) {
   const x = String(status || "").toUpperCase();
@@ -27,10 +28,11 @@ export function BillingScreen() {
   // [MODIFIED] 체크박스 2개 → 동기화 버튼 1개로 단순화
   // 실서버 저장/결제: 세션 accessToken 존재 시 자동 활성화
   const serverWriteEnabled = !!state.session?.accessToken;
-  // serverSyncEnabled 상태 제거
-  const [syncLoading, setSyncLoading] = useState(false);
+  // [MODIFIED] useState(syncLoading/serverSyncedAt/serverInvoices) → React Query로 대체
+  const invoicesQuery = useInvoicesQuery({ visitId }); // [ADDED]
+  const syncLoading = invoicesQuery.isFetching; // [MODIFIED]
   const [serverSyncedAt, setServerSyncedAt] = useState<string | null>(null);
-  const [serverInvoices, setServerInvoices] = useState<BackendInvoice[]>([]);
+  const serverInvoices: BackendInvoice[] = invoicesQuery.data ?? []; // [MODIFIED]
   const [lastServerPayment, setLastServerPayment] = useState<{ paymentId: number; method: string; paidAt?: string } | null>(null);
 
   const targetVisit = state.visits.find((v) => v.id === visitId);
@@ -55,19 +57,17 @@ export function BillingScreen() {
     window.setTimeout(() => setMessage(""), 2400);
   };
 
+  // [MODIFIED] 직접 fetch → React Query refetch() 위임
   const syncBillingFromServer = async () => {
     if (!state.session?.accessToken) return emit("실서버 IAM 로그인 후 동기화 가능합니다.");
     if (!visitId) return emit("접수를 먼저 선택해주세요.");
     try {
-      setSyncLoading(true);
-      const list = await listInvoicesServer({ session: state.session ?? undefined, visitId });
-      setServerInvoices(list);
+      const result = await invoicesQuery.refetch(); // [MODIFIED]
+      const list = result.data ?? [];
       setServerSyncedAt(new Date().toLocaleTimeString("ko-KR"));
       emit(`실서버 수납 동기화 완료 (청구 ${list.length}건)`);
     } catch (e: any) {
       emit(`실서버 수납 동기화 실패: ${e?.message || e}`);
-    } finally {
-      setSyncLoading(false);
     }
   };
 

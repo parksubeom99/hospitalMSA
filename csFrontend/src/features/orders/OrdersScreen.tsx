@@ -7,7 +7,8 @@ import { computeAdmission, MEDICATION_CATALOG, useHospital } from "@/shared/stor
 import type { FinalOrderInjectionItem, FinalOrderMedicationItem } from "@/shared/types/domain";
 import { calcNights, periodLabel, todayDate, daysAfterToday } from "@/shared/lib/date";
 import { formatCurrency } from "@/shared/lib/format";
-import { getFinalOrdersByVisitServer, saveAndFinalizeFinalOrdersServer } from "@/shared/services/clinicalApi";
+import { saveAndFinalizeFinalOrdersServer } from "@/shared/services/clinicalApi";
+import { useFinalOrdersQuery } from "@/shared/services/orders/ordersQueries"; // [ADDED]
 
 type FinalOrderType = "MED" | "SURGERY" | "ADMISSION" | "INJECTION" | "NONE";
 
@@ -50,9 +51,15 @@ export function OrdersScreen() {
   // [MODIFIED] 체크박스 2개 → 동기화 버튼 1개로 단순화
   // 실서버 저장/확정: 세션 accessToken 존재 시 자동 활성화
   const serverWriteEnabled = !!state.session?.accessToken;
-  // serverSyncEnabled 상태 제거
-  const [syncLoading, setSyncLoading] = useState(false);
-  const [serverFinalSummary, setServerFinalSummary] = useState<string>("미동기화");
+
+  // [MODIFIED] useState(syncLoading/serverFinalSummary) → React Query로 대체
+  const finalOrdersQuery = useFinalOrdersQuery({ visitId }); // [ADDED]
+  const syncLoading = finalOrdersQuery.isFetching; // [MODIFIED]
+  const serverFinalSummary = finalOrdersQuery.data // [MODIFIED]
+    ? finalOrdersQuery.data.length === 0
+      ? "실서버 최종오더 없음"
+      : finalOrdersQuery.data.map((r: any) => `${r.type}:${r.status}`).join(", ")
+    : "미동기화";
 
   useEffect(() => {
     const fo = state.finalOrders[visitId];
@@ -136,22 +143,16 @@ export function OrdersScreen() {
   };
 
 
+  // [MODIFIED] 직접 fetch → React Query refetch() 위임
   const syncFinalOrdersFromServer = async () => {
     if (!state.session?.accessToken) return emit("실서버 IAM 로그인 후 동기화 가능합니다.");
     if (!visitId) return emit("접수를 먼저 선택해주세요.");
     try {
-      setSyncLoading(true);
-      const rows = await getFinalOrdersByVisitServer({ session: state.session ?? undefined, visitId });
-      if (!rows.length) {
-        setServerFinalSummary('실서버 최종오더 없음');
-      } else {
-        setServerFinalSummary(rows.map((r: any) => `${r.type}:${r.status}`).join(', '));
-      }
+      const result = await finalOrdersQuery.refetch(); // [MODIFIED]
+      const rows = result.data ?? [];
       emit(`실서버 최종오더 동기화 완료 (${rows.length}건)`);
     } catch (e: any) {
       emit(`실서버 동기화 실패: ${e?.message || e}`);
-    } finally {
-      setSyncLoading(false);
     }
   };
 

@@ -5,7 +5,9 @@ import { GlassCard } from "@/shared/components/GlassCard";
 import { RoleGate } from "@/shared/components/RoleGate";
 import { useHospital } from "@/shared/store/HospitalStore";
 import type { StaffProfile } from "@/shared/types/domain";
-import { createMasterStaffServer, deactivateMasterStaffServer, listMasterStaffServer, updateMasterStaffServer } from "@/shared/services/masterStaffApi";
+import { createMasterStaffServer, deactivateMasterStaffServer, updateMasterStaffServer } from "@/shared/services/masterStaffApi";
+import { useMasterStaffQuery, masterQueryKeys } from "@/shared/services/master/masterQueries"; // [ADDED]
+import { useQueryClient } from "@tanstack/react-query"; // [ADDED]
 
 type EmailDomainOption = "naver.com" | "daum.net" | "google.com" | "custom";
 
@@ -75,20 +77,20 @@ export function MasterSettingsScreen() {
   // [FIX] isServerSession 선언을 serverMode 위로 이동 — TDZ(Block-scoped variable used before declaration) 해소
   const isServerSession = state.session?.authSource === "server";
   const serverMode = isServerSession;
+
+  // [MODIFIED] useState(serverBusy) + useState(serverStaff) + useRef(syncedRef/serverStaffIdsRef) → React Query로 대체
+  const qc = useQueryClient(); // [ADDED]
+  const masterStaffQuery = useMasterStaffQuery(); // [ADDED]
+  const serverStaff: StaffProfile[] = masterStaffQuery.data ?? []; // [MODIFIED]
+  const serverStaffIdsRef = useRef<Set<number>>(new Set(serverStaff.map((s) => s.staffId)));
+  const syncedRef = useRef<boolean>(masterStaffQuery.isSuccess);
   const [serverBusy, setServerBusy] = useState(false);
   const [serverLastSyncAt, setServerLastSyncAt] = useState<string>("");
-  const [jobFilter, setJobFilter] = useState<"ALL" | "DOCTOR" | "ADMIN">("ALL");
-  const [form, setForm] = useState<FormState>(toFormState());
-  const [message, setMessage] = useState("");
-  const phoneMidRef = useRef<HTMLInputElement | null>(null);
-  const phoneLastRef = useRef<HTMLInputElement | null>(null);
-
-  // [FIX] 서버 전용 목록 상태 — 로컬 seed와 완전 분리
-  const [serverStaff, setServerStaff] = useState<StaffProfile[]>([]);
-  // [FIX] ref: stale closure 없이 최신 서버 ID Set 유지
-  const serverStaffIdsRef = useRef<Set<number>>(new Set());
-  // [FIX] 동기화 완료 여부 — 동기화 전 수정/삭제 시도 방어
-  const syncedRef = useRef<boolean>(false);
+  const [jobFilter, setJobFilter] = useState<"ALL" | "DOCTOR" | "ADMIN">("ALL"); // [RESTORED]
+  const [form, setForm] = useState<FormState>(toFormState()); // [RESTORED]
+  const [message, setMessage] = useState(""); // [RESTORED]
+  const phoneMidRef = useRef<HTMLInputElement | null>(null); // [RESTORED]
+  const phoneLastRef = useRef<HTMLInputElement | null>(null); // [RESTORED]
 
   // [FIX] serverMode ON이면 서버 목록만, OFF면 로컬 seed만 표시 (혼합 금지)
   //       active=false(비활성화된 직원)는 목록에서 제외
@@ -107,7 +109,7 @@ export function MasterSettingsScreen() {
   // [REMOVED] toggleServerMode, toggleAutoSync 제거
   // serverMode = isServerSession (세션 기반 자동 결정)
 
-  // [MODIFIED] syncFromServer — 서버 목록을 serverStaff에만 저장
+  // [MODIFIED] 직접 fetch → React Query refetch() 위임
   const syncFromServer = async () => {
     if (!isServerSession) {
       emit("실서버 동기화는 IAM 실로그인 후 사용해주세요.");
@@ -115,9 +117,9 @@ export function MasterSettingsScreen() {
     }
     setServerBusy(true);
     try {
-      const list = await listMasterStaffServer();
+      const result = await masterStaffQuery.refetch(); // [MODIFIED]
+      const list = result.data ?? [];
       const activeList = list.filter((x) => x.active !== false);
-      setServerStaff(activeList);
       serverStaffIdsRef.current = new Set(activeList.map((x) => x.staffId));
       syncedRef.current = true;
       setServerLastSyncAt(new Date().toLocaleTimeString("ko-KR"));
@@ -129,10 +131,10 @@ export function MasterSettingsScreen() {
     }
   };
 
-  // [MODIFIED] 세션 변경 시 서버 관련 상태 초기화 (serverMode 상태 제거로 단순화)
+  // [MODIFIED] 세션 변경 시 서버 관련 상태 초기화
   useEffect(() => {
     if (!isServerSession) {
-      setServerStaff([]);
+      qc.removeQueries({ queryKey: masterQueryKeys.staff() }); // [MODIFIED] setServerStaff([]) → Query 캐시 무효화
       serverStaffIdsRef.current = new Set();
       syncedRef.current = false;
     }
@@ -186,12 +188,16 @@ export function MasterSettingsScreen() {
         : await createMasterStaffServer({ ...payload, staffId: 0 });
 
       if (!isUpdate && saved.staffId > 0) {
-        // [FIX] 신규 등록: ref + serverStaff에 즉시 추가 (재동기화 없이 바로 수정/삭제 가능)
+        // [MODIFIED] setServerStaff → qc.setQueryData (Query 캐시 직접 업데이트)
         serverStaffIdsRef.current.add(saved.staffId);
-        setServerStaff((prev) => [...prev, saved]);
+        qc.setQueryData(masterQueryKeys.staff(), (prev: StaffProfile[] | undefined) =>
+          prev ? [...prev, saved] : [saved]
+        );
       } else if (isUpdate) {
-        // [FIX] 수정: serverStaff 목록 해당 항목만 교체
-        setServerStaff((prev) => prev.map((s) => s.staffId === saved.staffId ? saved : s));
+        // [MODIFIED] setServerStaff → qc.setQueryData
+        qc.setQueryData(masterQueryKeys.staff(), (prev: StaffProfile[] | undefined) =>
+          prev ? prev.map((s) => s.staffId === saved.staffId ? saved : s) : [saved]
+        );
       }
 
       // [FIX] 로컬 store에는 upsertStaff 호출하지 않음
@@ -228,9 +234,10 @@ export function MasterSettingsScreen() {
     setServerBusy(true);
     try {
       await deactivateMasterStaffServer(staff.staffId);
-      // [FIX] serverStaff + ref에서만 제거 (로컬 store removeStaff 제거)
-      //       serverMode ON이면 serverStaff가 단일 진실 공급원이므로 충분
-      setServerStaff((prev) => prev.filter((s) => s.staffId !== staff.staffId));
+      // [MODIFIED] setServerStaff → qc.setQueryData (Query 캐시 직접 업데이트)
+      qc.setQueryData(masterQueryKeys.staff(), (prev: StaffProfile[] | undefined) =>
+        prev ? prev.filter((s) => s.staffId !== staff.staffId) : []
+      );
       serverStaffIdsRef.current.delete(staff.staffId);
       emit("직원 프로필 비활성화 완료(서버)");
       setServerLastSyncAt(new Date().toLocaleTimeString("ko-KR"));

@@ -7,7 +7,8 @@ import { normalizeExamSelection, useHospital, EXAM_OPTIONS } from "@/shared/stor
 import type { ExamCategory, ExamOrderItem } from "@/shared/types/domain";
 import { formatRrnMasked } from "@/shared/lib/masking";
 import { STATUS_LABEL } from "@/shared/config/constants";
-import { getExamOrdersByVisitServer, getSoapServer, saveExamOrdersByVisitServer, saveSoapServer } from "@/shared/services/clinicalApi";
+import { saveExamOrdersByVisitServer, saveSoapServer } from "@/shared/services/clinicalApi";
+import { useExamOrdersQuery, useSoapQuery } from "@/shared/services/clinical/clinicalQueries"; // [ADDED]
 
 export function ClinicalScreen() {
   const { state, patientsById, saveSoap, saveExamOrders } = useHospital();
@@ -29,8 +30,10 @@ export function ClinicalScreen() {
   // 실서버 저장: 세션이 실서버 로그인(accessToken 존재)이면 자동으로 서버 저장 시도
   // 실서버 동기화: "동기화 실행" 버튼 클릭 시에만 수행
   const serverWriteEnabled = !!state.session?.accessToken;
-  // serverSyncEnabled 상태 제거 — 버튼 클릭으로만 동기화
-  const [syncLoading, setSyncLoading] = useState(false);
+  // [MODIFIED] useState(syncLoading/serverSyncedAt) → React Query로 대체
+  const soapQuery = useSoapQuery({ visitId }); // [ADDED]
+  const examOrdersQuery = useExamOrdersQuery({ visitId }); // [ADDED]
+  const syncLoading = soapQuery.isFetching || examOrdersQuery.isFetching; // [MODIFIED]
   const [serverSyncedAt, setServerSyncedAt] = useState<string | null>(null);
 
   useEffect(() => {
@@ -67,25 +70,28 @@ export function ClinicalScreen() {
   };
 
 
+  // [MODIFIED] 직접 fetch → React Query refetch() 위임
   const syncClinicalFromServer = async () => {
     if (!state.session?.accessToken) return emit("실서버 IAM 로그인 후 동기화 가능합니다.");
     if (!visitId) return emit("접수를 먼저 선택해주세요.");
     try {
-      setSyncLoading(true);
-      const [soapRes, examRes] = await Promise.all([
-        getSoapServer({ session: state.session ?? undefined, visitId }),
-        getExamOrdersByVisitServer({ session: state.session ?? undefined, visitId }),
+      const [soapResult, examResult] = await Promise.all([ // [MODIFIED]
+        soapQuery.refetch(),
+        examOrdersQuery.refetch(),
       ]);
-      setSoap({
-        subjective: soapRes.subjective ?? '', objective: soapRes.objective ?? '', assessment: soapRes.assessment ?? '', plan: soapRes.plan ?? '',
-      });
+      const soapRes = soapResult.data;
+      const examRes = examResult.data ?? [];
+      if (soapRes) {
+        setSoap({
+          subjective: soapRes.subjective ?? "", objective: soapRes.objective ?? "",
+          assessment: soapRes.assessment ?? "", plan: soapRes.plan ?? "",
+        });
+      }
       setSelectedItems(examRes);
-      setServerSyncedAt(new Date().toLocaleTimeString('ko-KR'));
+      setServerSyncedAt(new Date().toLocaleTimeString("ko-KR"));
       emit(`실서버 동기화 완료 (SOAP + 검사오더 ${examRes.length}건)`);
     } catch (e: any) {
       emit(`실서버 동기화 실패: ${e?.message || e}`);
-    } finally {
-      setSyncLoading(false);
     }
   };
 
