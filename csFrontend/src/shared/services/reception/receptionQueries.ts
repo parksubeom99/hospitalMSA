@@ -1,5 +1,5 @@
-// [ADDED] React Query hooks for reception (reservations + visits)
-// 설계 원칙: enabled:false + refetch() — 기존 버튼 기반 UX 완전 보존
+// [MODIFIED] React Query hooks for reception (reservations + visits)
+// 설계 원칙: enabled:true — 화면 진입 시 자동 서버 조회, staleTime으로 불필요한 재요청 방지
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchReservationsServer,
@@ -15,6 +15,7 @@ import {
   updateVisitServer,
   upsertPatientForReception,
 } from "./receptionMutationApi";
+import { getTodayKST } from "@/shared/lib/date"; // [ADDED] UTC/KST 버그 #3 차단
 
 // ── Query Keys ──────────────────────────────────────────────
 export const receptionQueryKeys = {
@@ -30,11 +31,13 @@ type UseReservationsQueryArgs = {
 };
 
 export function useReservationsQuery(args: UseReservationsQueryArgs = {}) {
-  const date = args.date ?? new Date().toISOString().slice(0, 10);
+  // [MODIFIED] new Date().toISOString().slice(0,10) (UTC) → getTodayKST() (KST)
+  // 이유: 한국 자정~오전 9시에 UTC 기준 날짜는 전날 → 오늘 예약 0건 (버그 #3)
+  const date = args.date ?? getTodayKST();
   return useQuery<SyncedReservationRow[]>({
     queryKey: receptionQueryKeys.reservations(date),
     queryFn: () => fetchReservationsServer({ date }),
-    enabled: args.enabled ?? false, // [ADDED] 기본 false — 버튼 클릭 시 refetch()
+    enabled: args.enabled ?? true,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,
@@ -51,7 +54,7 @@ export function useVisitsQuery(args: UseVisitsQueryArgs = {}) {
   return useQuery<SyncedVisitRow[]>({
     queryKey: receptionQueryKeys.visits(args.statuses),
     queryFn: () => fetchVisitsServer({ statuses: args.statuses }),
-    enabled: args.enabled ?? false, // [ADDED] 기본 false — 버튼 클릭 시 refetch()
+    enabled: args.enabled ?? true,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,

@@ -44,10 +44,12 @@ function asArray(payload: any): any[] {
 }
 
 export async function createInvoiceServer(args: { session?: HeadersInput; visitId: number; amount: number }) {
-  const x = await fetchJsonWithAuth<any>(`${ADMIN_BASE}/admin/billing/invoices`, {
+  const raw = await fetchJsonWithAuth<any>(`${ADMIN_BASE}/admin/billing/invoices`, {
     method: 'POST',
     body: JSON.stringify({ visitId: args.visitId, amount: Math.max(0, Math.round(args.amount)) }),
   });
+  // [FIXED] ApiResponseAdvice 래핑 언래핑
+  const x = raw?.data ?? raw;
   return normalizeInvoice(x);
 }
 
@@ -58,7 +60,7 @@ export async function listInvoicesServer(args: { session?: HeadersInput; visitId
 }
 
 export async function payInvoiceServer(args: { session?: HeadersInput; invoiceId: number; method: 'CARD' | 'CASH'; amount: number; idempotencyKey?: string }): Promise<BackendPayment> {
-  const x = await fetchJsonWithAuth<any>(`${ADMIN_BASE}/admin/billing/payments`, {
+  const raw = await fetchJsonWithAuth<any>(`${ADMIN_BASE}/admin/billing/payments`, {
     method: 'POST',
     body: JSON.stringify({
       invoiceId: args.invoiceId,
@@ -67,6 +69,8 @@ export async function payInvoiceServer(args: { session?: HeadersInput; invoiceId
       idempotencyKey: args.idempotencyKey,
     }),
   });
+  // [FIXED] ApiResponseAdvice 래핑 언래핑
+  const x = raw?.data ?? raw;
   return {
     paymentId: Number(x.paymentId ?? 0),
     invoiceId: Number(x.invoiceId ?? args.invoiceId),

@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { GlassCard } from "@/shared/components/GlassCard";
 import { RoleGate } from "@/shared/components/RoleGate";
 import { StatusBadge } from "@/shared/components/StatusBadge";
 import { useHospital } from "@/shared/store/HospitalStore";
-import { formatDateTime, nowDateTimeRounded } from "@/shared/lib/date";
+import { formatDateTime, getTodayKST, nowDateTimeRounded } from "@/shared/lib/date"; // [MODIFIED] getTodayKST 추가
 import { formatRrnMasked, maskName, maskPhone } from "@/shared/lib/masking";
 import { STATUS_LABEL } from "@/shared/config/constants";
 import type { VisitStatus } from "@/shared/types/domain";
 import { cancelVisitServer, checkInReservationServer, createReservationServer, createVisitServer, updateVisitServer, upsertPatientForReception } from "@/shared/services/receptionMutationApi";
-import { useReservationsQuery, useVisitsQuery } from "@/shared/services/reception/receptionQueries"; // [ADDED]
+import { updateEmergencyCount } from "@/shared/services/dashboard/dashboardApi";
+import { useReservationsQuery, useVisitsQuery, receptionQueryKeys } from "@/shared/services/reception/receptionQueries";
+import type { SyncedReservationRow } from "@/shared/services/reception/receptionApi";
 
 type ReceptionTab = "RESERVATION" | "WAITING" | "EMERGENCY";
 
@@ -38,28 +41,53 @@ export function ReceptionScreen() {
     setEmergencyCount,
   } = useHospital() as any;
 
-  // [MODIFIED] 체크박스 제거 → 세션 accessToken 존재 시 자동으로 실서버 저장 모드 활성화
-  // useState(false) + setServerWriteEnabled 제거 — 세션 기반 const로 단순화
-  const serverWriteEnabled = !!state.session?.accessToken; // [MODIFIED]
+  const qc = useQueryClient();
 
-  // [ADDED] React Query — enabled:false 기본값, 버튼 클릭 시 refetch() 가능
-  const reservationsQuery = useReservationsQuery();
+  const serverWriteEnabled = state.session?.authSource === "server";
+
+  // [MODIFIED] UTC → KST 기준 날짜 (버그 #3)
+  const today = getTodayKST();
+  const reservationsQuery = useReservationsQuery({ date: today });
   const visitsQuery = useVisitsQuery();
+
+  const syncLoading = reservationsQuery.isFetching || visitsQuery.isFetching;
 
   const [tab, setTab] = useState<ReceptionTab>("RESERVATION");
   const [toast, setToast] = useState("");
 
-  // [MODIFIED] 예약 날짜 기본값 → 오늘 날짜 기반 (30분 단위 올림)
-  // 이유: 고정값 "2026-03-11T10:30"은 과거 날짜 → 과거 예약 방지
   const [reservationForm, setReservationForm] = useState({ name: "", phone: "", reservedAt: nowDateTimeRounded() });
   const [editingReservationId, setEditingReservationId] = useState<number | null>(null);
 
-  const activeReservations = useMemo(
-    () => state.reservations.filter((r: any) => r.status === "RESERVED").sort((a: any, b: any) => a.reservedAt.localeCompare(b.reservedAt)),
-    [state.reservations]
-  );
+  // ── [MODIFIED] activeReservations — 서버 데이터 우선, 로컬 fallback (버그 #2) ──────────
+  // 이유: reservationsQuery.refetch() 해도 state.reservations(로컬)만 보면 서버 데이터 무시됨
+  // 서버 세션 + 서버 데이터(BOOKED/RESERVED 상태) 있으면 서버 데이터 우선 사용
+  const isServerReservation = serverWriteEnabled
+    && Array.isArray(reservationsQuery.data)
+    && reservationsQuery.data.length > 0;
 
-  const receptionRows = useMemo(() => state.visits.slice().sort((a: any, b: any) => b.id - a.id), [state.visits]);
+  const activeReservations = useMemo(() => {
+    if (isServerReservation) {
+      // 서버: CHECKED_IN/CANCELLED 제외, RESERVED(=BOOKED)만 표시
+      return [...(reservationsQuery.data as SyncedReservationRow[])]
+        .filter((r) => r.status === "RESERVED")
+        .sort((a, b) => a.reservedAt.localeCompare(b.reservedAt));
+    }
+    // 로컬 fallback
+    return state.reservations
+      .filter((r: any) => r.status === "RESERVED")
+      .sort((a: any, b: any) => a.reservedAt.localeCompare(b.reservedAt));
+  }, [isServerReservation, reservationsQuery.data, state.reservations]);
+  // ────────────────────────────────────────────────────────────────────────────────────────
+
+  // ── 접수 목록 — 서버 데이터 우선, 로컬 fallback ──────────────────────────────────────────
+  const isServerData = serverWriteEnabled && Array.isArray(visitsQuery.data) && visitsQuery.data.length > 0;
+  const receptionRows = useMemo(() => {
+    if (isServerData) {
+      return [...visitsQuery.data!].sort((a: any, b: any) => b.id - a.id);
+    }
+    return state.visits.slice().sort((a: any, b: any) => b.id - a.id);
+  }, [isServerData, visitsQuery.data, state.visits]);
+  // ────────────────────────────────────────────────────────────────────────────────────────
 
   const [visitForm, setVisitForm] = useState<VisitForm>({
     mode: "WALK_IN",
@@ -106,11 +134,24 @@ export function ReceptionScreen() {
     setVisitForm({ mode: "WALK_IN", patientName: "", gender: "M", rrnFront: "", rrnBack: "", phone: "", status: "WAITING" });
   };
 
+  const handleSync = async () => {
+    try {
+      await Promise.all([
+        reservationsQuery.refetch(),
+        visitsQuery.refetch(),
+      ]);
+      showToast("서버 데이터 동기화 완료");
+    } catch {
+      showToast("동기화 실패");
+    }
+  };
+
   const handleReservationSave = async () => {
     const iso = new Date(reservationForm.reservedAt).toISOString();
     try {
       if (serverWriteEnabled && !editingReservationId) {
-        const tempPatientId = Number(`${Date.now()}`.slice(-10));
+        // [FIXED P2] slice(-10) → Date.now() 전체 사용 (Long 범위 안전, 400 오류 차단)
+        const tempPatientId = Date.now();
         await upsertPatientForReception({
           session: state.session ?? undefined,
           patientId: tempPatientId,
@@ -126,6 +167,7 @@ export function ReceptionScreen() {
           patientName: reservationForm.name,
           reservedAtIso: iso,
         });
+        qc.invalidateQueries({ queryKey: ["reception", "reservations"] });
       }
       const result = editingReservationId
         ? updateReservationEntry(editingReservationId, { ...reservationForm, reservedAt: iso })
@@ -137,23 +179,43 @@ export function ReceptionScreen() {
     }
   };
 
+  // [MODIFIED] 예약내원 접수 — 버그 #4/#5 통합 수정
+  // 버그 #4: 서버 예약 클릭 시 r.patientId → patientsById에 없을 수 있음
+  //          → contactName/contactPhone fallback으로 방문 생성
+  // 버그 #5: checkIn 성공 후 로컬 state.reservations status 미동기화
+  //          → isServerReservation=true 시 refetch()로 서버 데이터 재조회하여 자동 해결
   const handleRegisterReservationVisit = async (reservationId: number) => {
-    const r = state.reservations.find((it: any) => it.id === reservationId);
-    if (!r) return;
+    // 서버 예약 데이터 우선, 없으면 로컬 fallback
+    const serverR = isServerReservation
+      ? (reservationsQuery.data as SyncedReservationRow[]).find((it) => it.id === reservationId)
+      : undefined;
+    const localR = state.reservations.find((it: any) => it.id === reservationId);
+    const r = localR ?? serverR; // 로컬에 있으면 patientId 활용, 없으면 서버 데이터
+    if (!r) { showToast("예약 정보를 찾을 수 없습니다."); return; }
+
+    // 환자 정보: 로컬 patientsById 우선, 없으면 서버 contactName 사용 (버그 #4)
     const p = patientsById[r.patientId];
-    if (!p) return;
+    const patientName = p?.name ?? serverR?.contactName ?? r.contactName ?? "";
+    const gender: "M" | "F" = p?.gender ?? "M";
+    const rrnFront = p?.rrnFront ?? "000000";
+    const rrnBack = p?.rrnBack ?? "1000000";
+    const phone = p?.phone ?? serverR?.contactPhone ?? r.contactPhone ?? "";
+
     try {
       if (serverWriteEnabled) {
         await checkInReservationServer({ session: state.session ?? undefined, reservationId });
+        // [MODIFIED] 버그 #5: refetch()로 서버 최신 상태 반영 → CHECKED_IN이 activeReservations에서 사라짐
+        await reservationsQuery.refetch();
+        qc.invalidateQueries({ queryKey: ["reception", "visits"] });
       }
       const result = registerVisitEntry({
         mode: "RESERVATION",
         reservationId,
-        patientName: p.name,
-        gender: p.gender,
-        rrnFront: p.rrnFront,
-        rrnBack: p.rrnBack,
-        phone: p.phone,
+        patientName,
+        gender,
+        rrnFront,
+        rrnBack,
+        phone,
       });
       showToast(result.message + (serverWriteEnabled ? " (서버 체크인 포함)" : ""));
     } catch (e: any) {
@@ -167,7 +229,8 @@ export function ReceptionScreen() {
         if (editingVisitId) {
           await updateVisitServer({ session: state.session ?? undefined, visitId: editingVisitId, patientName: visitForm.patientName });
         } else {
-          const tempPatientId = Number(`${Date.now()}`.slice(-10));
+          // [FIXED P2] slice(-10) → Date.now() 전체 사용 (Long 범위 안전, 400 오류 차단)
+        const tempPatientId = Date.now();
           await upsertPatientForReception({
             session: state.session ?? undefined,
             patientId: tempPatientId,
@@ -184,6 +247,7 @@ export function ReceptionScreen() {
             mode: visitForm.mode,
           });
         }
+        qc.invalidateQueries({ queryKey: ["reception", "visits"] });
       }
       const result = editingVisitId
         ? updateVisitEntry(editingVisitId, {
@@ -218,17 +282,19 @@ export function ReceptionScreen() {
 
   const selectVisitForEdit = (visit: any) => {
     const p = patientsById[visit.patientId];
-    if (!p) return;
+    // [FIXED B1] isServerData=true 시 p가 없어도 서버 필드로 폼 채움
+    // 이전: p 없으면 return → 수정 버튼 눌러도 폼 변화 없음
+    // 수정: visit.patientName(서버) fallback 사용, rrnFront/Back/phone은 빈값 허용
     setEditingVisitId(visit.id);
     setRrnVisible(false);
     setVisitForm({
       mode: visit.visitType,
       reservationId: visit.sourceReservationId,
-      patientName: p.name,
-      gender: p.gender,
-      rrnFront: p.rrnFront,
-      rrnBack: p.rrnBack,
-      phone: p.phone,
+      patientName: p?.name ?? visit.patientName ?? "",
+      gender: p?.gender ?? (visit.gender === "F" ? "F" : "M"),
+      rrnFront: p?.rrnFront ?? "",
+      rrnBack: p?.rrnBack ?? "",
+      phone: p?.phone ?? "",
       status: visit.status,
     });
     setTab("WAITING");
@@ -245,12 +311,14 @@ export function ReceptionScreen() {
           subtitle="원무/시스템관리자 전용 · 예약 / 대기 / 응급"
           right={<StatusBadge label={`총 인원 ${capacity.current}/30`} tone={capacity.level === "SAFE" ? "green" : capacity.level === "WARN" ? "orange" : "red"} />}
         >
-          {/* [ADDED] 실서버 저장 모드 상태 표시 — 세션 기반 자동 결정 */}
-          <div className="inline-check-group" style={{ marginBottom: 8 }}>
+          <div className="inline-check-group" style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 12 }}>
             {serverWriteEnabled
               ? <small className="muted">실서버 저장 모드 활성 (IAM 로그인됨)</small>
               : <small className="muted">데모 모드 (실서버 저장 비활성)</small>
             }
+            <button type="button" onClick={handleSync} disabled={syncLoading} style={{ marginLeft: "auto" }}>
+              {syncLoading ? "동기화 중..." : "동기화"}
+            </button>
           </div>
 
           <div className="tab-row">
@@ -273,7 +341,16 @@ export function ReceptionScreen() {
                 </div>
               </GlassCard>
 
-              <GlassCard title="예약 현황" subtitle="이름/전화번호 마스킹 · 수정/예약내원접수" className="nested-card">
+              <GlassCard
+                title="예약 현황"
+                subtitle="이름/전화번호 마스킹 · 수정/예약내원접수"
+                className="nested-card"
+                right={
+                  <button type="button" onClick={() => reservationsQuery.refetch()} disabled={reservationsQuery.isFetching}>
+                    {reservationsQuery.isFetching ? "조회 중..." : "예약 조회"}
+                  </button>
+                }
+              >
                 <div className="table-wrap">
                   <table className="ui-table compact">
                     <thead><tr><th>예약번호</th><th>예약시각</th><th>예약자</th><th>전화번호</th><th>상태</th><th>관리</th></tr></thead>
@@ -322,12 +399,13 @@ export function ReceptionScreen() {
                       <option value="M">남(M)</option><option value="F">여(F)</option>
                     </select>
                   </label>
-                  <label>
-                    <span>상태 {editingVisitId ? "(수정 가능)" : "(등록 시 대기 고정)"}</span>
-                    <select value={visitForm.status} onChange={(e) => setVisitForm((s) => ({ ...s, status: e.target.value as VisitStatus }))} disabled={!editingVisitId}>
-                      <option value="WAITING">대기</option><option value="IN_TREATMENT">진료중</option><option value="COMPLETED">완료</option>
-                    </select>
-                  </label>
+                  <div className="info-pill">
+                    {/* [FIXED P4] 상태는 시스템 자동 부여 — 수동 선택 금지 */}
+                    {/* 등록: 항상 WAITING / 수정: 현재 상태 표시만 (변경 불가) */}
+                    <span>상태</span>
+                    <strong>{editingVisitId ? (STATUS_LABEL[visitForm.status] ?? visitForm.status) : "대기 (자동)"}</strong>
+                    <small>{editingVisitId ? "시스템 자동 관리" : "접수 시 자동 대기 설정"}</small>
+                  </div>
                 </div>
 
                 {visitForm.mode === "RESERVATION" && !editingVisitId && (
@@ -375,24 +453,70 @@ export function ReceptionScreen() {
                 </div>
               </GlassCard>
 
-              <GlassCard title="접수 목록" subtitle="목록에서는 이름/주민번호 마스킹 표시 · 전체보기 없음" className="nested-card">
+              <GlassCard
+                title="접수 목록"
+                subtitle="목록에서는 이름/주민번호 마스킹 표시 · 전체보기 없음"
+                className="nested-card"
+                right={
+                  <button type="button" onClick={() => visitsQuery.refetch()} disabled={visitsQuery.isFetching}>
+                    {visitsQuery.isFetching ? "조회 중..." : "접수 조회"}
+                  </button>
+                }
+              >
                 <div className="table-wrap">
                   <table className="ui-table">
                     <thead><tr><th>접수번호</th><th>환자명</th><th>성별</th><th>주민번호</th><th>상태</th><th>등록시각</th><th>접수유형</th><th>관리</th></tr></thead>
                     <tbody>
                       {receptionRows.map((visit: any) => {
                         const p = patientsById[visit.patientId];
-                        if (!p) return null;
+                        const displayName = isServerData
+                          ? maskName(visit.patientName ?? '-')
+                          : (p ? maskName(p.name) : '-');
+                        const displayGender = isServerData
+                          ? (visit.gender === 'M' ? '남(M)' : visit.gender === 'F' ? '여(F)' : '-')
+                          : (p ? (p.gender === 'M' ? '남(M)' : '여(F)') : '-');
+                        const displayRrn = isServerData
+                          ? (visit.rrnMasked ?? '******-*******')
+                          : (p ? formatRrnMasked(p.rrnFront, p.rrnBack) : '-');
+                        if (!isServerData && !p) return null;
                         return (
                           <tr key={visit.id}>
                             <td>{visit.id}</td>
-                            <td>{maskName(p.name)}</td>
-                            <td>{p.gender === "M" ? "남(M)" : "여(F)"}</td>
-                            <td>{formatRrnMasked(p.rrnFront, p.rrnBack)}</td>
-                            <td>{STATUS_LABEL[visit.status]}</td>
+                            <td>{displayName}</td>
+                            <td>{displayGender}</td>
+                            <td>{displayRrn}</td>
+                            <td>{STATUS_LABEL[visit.status] ?? visit.status}</td>
                             <td>{formatDateTime(visit.registeredAt)}</td>
                             <td>{visit.visitType === "RESERVATION" ? "예약내원" : "현장"}</td>
-                            <td><div className="inline-btns"><button type="button" onClick={() => selectVisitForEdit(visit)}>수정</button><button type="button" onClick={async () => { try { if (serverWriteEnabled) await cancelVisitServer({ session: state.session ?? undefined, visitId: visit.id, reason: "UI 삭제" }); showToast(removeVisitEntry(visit.id).message + (serverWriteEnabled ? " (서버 취소 포함)" : "")); } catch (e: any) { showToast(`접수 서버 취소 실패: ${e?.message || e}`); } }}>삭제</button></div></td>
+                            <td><div className="inline-btns">
+                              {/* WAITING 상태만 수정/삭제 허용 — 서버 cancel()이 WAITING만 허용 (409 원천 차단) */}
+                              {visit.status === "WAITING" && (
+                                <button type="button" onClick={() => selectVisitForEdit(visit)}>수정</button>
+                              )}{visit.status === "WAITING" && <button type="button" onClick={async () => {
+                              try {
+                                if (serverWriteEnabled) {
+                                  try {
+                                    await cancelVisitServer({ session: state.session ?? undefined, visitId: visit.id, reason: "UI 삭제" });
+                                  } catch (serverErr: any) {
+                                    const msg = String(serverErr?.message ?? "");
+                                    // [FIXED] 409 = 이미 서버에서 CANCELED 상태
+                                    // → 서버 취소는 이미 됐으므로 로컬 삭제 + 목록 갱신은 진행
+                                    if (!msg.includes("409") && !msg.toLowerCase().includes("conflict")) {
+                                      showToast(`접수 서버 취소 실패: ${msg}`);
+                                      return;
+                                    }
+                                  }
+                                  // 성공 또는 409(이미 취소) 모두 → 로컬 삭제 + 목록 즉시 갱신
+                                  removeVisitEntry(visit.id);
+                                  await visitsQuery.refetch();
+                                  showToast("삭제 완료 (서버 반영)");
+                                } else {
+                                  showToast(removeVisitEntry(visit.id).message);
+                                }
+                              } catch (e: any) {
+                                showToast(`삭제 실패: ${e?.message || e}`);
+                              }
+                            }}>삭제</button>}</div></td>
                           </tr>
                         );
                       })}
@@ -405,14 +529,24 @@ export function ReceptionScreen() {
 
           {tab === "EMERGENCY" && (
             <div className="split-grid emergency-grid">
-              <GlassCard title="응급 환자 수" subtitle="0~10 범위" className="nested-card">
+              <GlassCard title="응급 환자 수" subtitle="응급 병상 수동 조정 (운영자 직접 설정)" className="nested-card">
                 <div className="counter-panel">
                   <div className="counter-big">{state.emergencyCount}명</div>
                   <input type="range" min={0} max={10} value={emergencyValue} onChange={(e) => setEmergencyValue(Number(e.target.value))} />
                   <div className="counter-actions">
                     <button type="button" onClick={() => setEmergencyValue((v) => Math.max(0, v - 1))}>-1</button>
                     <button type="button" onClick={() => setEmergencyValue((v) => Math.min(10, v + 1))}>+1</button>
-                    <button type="button" className="primary-btn" onClick={() => showToast(setEmergencyCount(emergencyValue).message)}>적용</button>
+                    <button type="button" className="primary-btn" onClick={async () => {
+                      const result = setEmergencyCount(emergencyValue);
+                      showToast(result.message);
+                      if (state.session?.authSource === "server") {
+                        try {
+                          await updateEmergencyCount(emergencyValue);
+                        } catch (e) {
+                          showToast("서버 저장 실패 (로컬만 적용됨)");
+                        }
+                      }
+                    }}>적용</button>
                   </div>
                 </div>
               </GlassCard>

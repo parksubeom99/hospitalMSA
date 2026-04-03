@@ -65,3 +65,16 @@ export function calcNights(admitDate: string, dischargeDate: string): number {
 export function periodLabel(admitDate: string, dischargeDate: string): string {
   return `${formatDate(admitDate)} ~ ${formatDate(dischargeDate)}`;
 }
+
+// [ADDED] KST 기준 오늘 날짜 반환 (버그 #3 차단)
+// 이유: new Date().toISOString()은 UTC 기준 → 한국 자정~오전 9시에 전날 날짜 반환
+//       예약 조회 API에 전날 날짜 전달 → 오늘 예약 0건 표시
+// 사용처: ReceptionScreen, receptionApi.ts, receptionQueries.ts
+export function getTodayKST(): string {
+  const kstMs = Date.now() + 9 * 60 * 60 * 1000;
+  const d = new Date(kstMs);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}

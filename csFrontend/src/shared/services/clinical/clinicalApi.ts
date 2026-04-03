@@ -16,6 +16,26 @@ function categoryLabel(cat: ExamCategory): string {
   return cat === 'LAB' ? '기본검사' : cat === 'RAD' ? '영상검사' : '내시경검사';
 }
 
+// [ADDED] 진료화면 드롭다운용 visit_clinical_status 전체 목록 조회
+// BILLED/BILLING_FAILED는 서버에서 이미 필터링됨
+export type VisitClinicalStatusItem = {
+  visitId: number;
+  clinicalStatus: string;
+  patientName?: string; // [FIXED B3] 드롭다운 이름 표시용
+};
+
+export async function getVisitClinicalStatusListServer(): Promise<VisitClinicalStatusItem[]> {
+  const raw = await fetchJsonWithAuth<any>(`${CLINICAL_BASE}/clinical/visit-status`, { method: 'GET' });
+  const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.data) ? raw.data : []);
+  return list
+    .filter((x: any) => x?.visitId != null)
+    .map((x: any) => ({
+      visitId: Number(x.visitId),
+      clinicalStatus: String(x.clinicalStatus ?? 'WAITING'),
+      patientName: x.patientName ? String(x.patientName) : undefined, // [FIXED B3]
+    }));
+}
+
 export async function getSoapServer(args: { session?: HeadersInput; visitId: number }) {
   // [FIXED] 404(SOAP 미작성) = 에러가 아닌 빈 값 → 폼을 빈 상태로 표시
   try {

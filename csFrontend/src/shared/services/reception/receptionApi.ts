@@ -1,6 +1,7 @@
 import { API_BASES } from "@/shared/config/api";
 import { fetchJsonWithAuth } from "@/shared/services/_core/http";
 import { fromBackendVisitStatus } from '@/shared/lib/integrationBridge';
+import { getTodayKST } from '@/shared/lib/date'; // [ADDED] UTC/KST 버그 #3 차단
 import type { VisitStatus } from '@/shared/types/domain';
 
 type HeadersInput = { accessToken?: string; tokenType?: string };
@@ -33,9 +34,10 @@ export type SyncedVisitRow = {
 };
 
 export async function fetchReservationsServer(args: { session?: HeadersInput; date?: string }): Promise<SyncedReservationRow[]> {
-  const date = args.date || new Date().toISOString().slice(0, 10);
+  // [MODIFIED] new Date().toISOString() (UTC) → getTodayKST() (KST)
+  // 이유: 한국 자정~오전 9시에 UTC는 전날 날짜 → 오늘 예약 0건 반환 (버그 #3)
+  const date = args.date || getTodayKST();
   const payload = await fetchJsonWithAuth<any>(`${ADMIN_BASE}/admin/reservations?date=${encodeURIComponent(date)}`, { method: 'GET' });
-  // [MODIFIED] map 반환 타입 SyncedReservationRow 명시 (이전 오기입 SyncedVisitRow 수정)
   return asArray(payload).map((x: any): SyncedReservationRow => {
     const rawStatus = String(x.status || x.reservationStatus || 'BOOKED').toUpperCase();
     const status: SyncedReservationRow['status'] =
@@ -53,9 +55,15 @@ export async function fetchReservationsServer(args: { session?: HeadersInput; da
 export async function fetchVisitsServer(args: { session?: HeadersInput; statuses?: string[] }): Promise<SyncedVisitRow[]> {
   const query = args.statuses?.length ? `?status=${encodeURIComponent(args.statuses.join(','))}` : '';
   const payload = await fetchJsonWithAuth<any>(`${ADMIN_BASE}/admin/visits${query}`, { method: 'GET' });
-  // [MODIFIED] gender를 변수로 분리해 SyncedVisitRow['gender'] 타입 명시 → string 넓힘 방지
-  // map 반환 타입 SyncedVisitRow 명시로 함수 반환 타입 완전 일치
-  return asArray(payload).map((x: any): SyncedVisitRow => {
+  // [FIXED] CANCELED/CANCELLED 상태 visit 목록에서 제거
+  // 이유: 삭제(cancel) 후 서버가 CANCELED 반환 → fromBackendVisitStatus가 COMPLETED 변환하지만
+  //       목록에 잔류함 → refetch 후에도 안 사라지는 문제
+  // 수정: 서버 원본 status가 CANCELED/CANCELLED인 row는 map 전에 미리 제거
+  const rows = asArray(payload).filter((x: any) => {
+    const raw = String(x.status ?? x.visitStatus ?? '').toUpperCase();
+    return raw !== 'CANCELED' && raw !== 'CANCELLED';
+  });
+  return rows.map((x: any): SyncedVisitRow => {
     const backendStatus = String(x.status ?? x.visitStatus ?? 'WAITING');
     const registeredAt = String(x.arrivedAt ?? x.registeredAt ?? x.createdAt ?? new Date().toISOString());
     const rawType = String(x.visitType ?? x.arrivalType ?? 'WALK_IN').toUpperCase();
