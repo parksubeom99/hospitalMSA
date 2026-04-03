@@ -30,7 +30,7 @@ public class OutboxService {
                        String partitionKey,
                        String topic,
                        Map<String, Object> payload) {
-        if (topic == null || topic.isBlank()) return; // topic 없으면 기록하지 않음(안전장치)
+        if (topic == null || topic.isBlank()) return;
         try {
             String json = om.writeValueAsString(payload == null ? Map.of() : payload);
             repo.save(OutboxEvent.builder()
@@ -50,10 +50,28 @@ public class OutboxService {
         }
     }
 
+    // [ADDED] 중복 발행 방지 record
+    // 이유: DIAGNOSTIC_ORDER_SUBMITTED는 SoapNoteService + OrderService 양쪽에서
+    //       트리거될 수 있음. visitStatusSvc.markExamRequested()가 idempotent이지만
+    //       Outbox 레벨에서도 동일 eventType + partitionKey(=visitId) + status=NEW 레코드
+    //       존재 시 중복 삽입을 방어적으로 차단.
+    @Transactional
+    public void recordIfAbsent(String eventType,
+                               String aggregateType,
+                               String aggregateId,
+                               String partitionKey,
+                               String topic,
+                               Map<String, Object> payload) {
+        if (topic == null || topic.isBlank()) return;
+        // 동일 eventType + partitionKey 조합의 NEW 레코드가 이미 있으면 skip
+        boolean exists = repo.existsByEventTypeAndPartitionKeyAndStatus(eventType, partitionKey, "NEW");
+        if (exists) return;
+        record(eventType, aggregateType, aggregateId, partitionKey, topic, payload);
+    }
+
     /** [LEGACY][STEP8] 기존 시그니처 유지(호출부 최소화를 위한 안전장치) */
     @Transactional
     public void record(String eventType, String aggregateType, String aggregateId, Map<String, Object> payload) {
-        // topic을 알 수 없는 호출은 기록하지 않음 (Step9부터는 topic 고정이 필수)
         record(eventType, aggregateType, aggregateId, aggregateId, null, payload);
     }
 

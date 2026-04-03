@@ -50,7 +50,7 @@ export function OrdersScreen() {
   const [message, setMessage] = useState("");
   // [MODIFIED] 체크박스 2개 → 동기화 버튼 1개로 단순화
   // 실서버 저장/확정: 세션 accessToken 존재 시 자동 활성화
-  const serverWriteEnabled = !!state.session?.accessToken;
+  const serverWriteEnabled = state.session?.authSource === "server"; // [FIXED] accessToken → authSource 기준으로 통일
 
   // [MODIFIED] useState(syncLoading/serverFinalSummary) → React Query로 대체
   const finalOrdersQuery = useFinalOrdersQuery({ visitId }); // [ADDED]

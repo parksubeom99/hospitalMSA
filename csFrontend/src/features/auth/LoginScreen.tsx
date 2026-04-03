@@ -1,23 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { GlassCard } from "@/shared/components/GlassCard";
 import { useHospital } from "@/shared/store/HospitalStore";
 
 export function LoginScreen() {
-  const { state, loginWithCredentials, loginWithServerCredentials, bootstrapAuthSession } = useHospital() as any;
+  const { loginWithCredentials, loginWithServerCredentials } = useHospital();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (state.session) return;
-    void (async () => {
-      const result = await bootstrapAuthSession();
-      if (result.ok) setMsg(result.message);
-    })();
-  }, [bootstrapAuthSession, state.session]);
+  // [REMOVED] bootstrapAuthSession() 자동 호출 useEffect 제거
+  // 이유: LoginScreen 마운트 즉시 저장된 토큰으로 자동 로그인됨
+  //       → 사용자가 아이디/비밀번호 입력 전에 세션 복원 → UX 혼란
+  //       토큰 유효성 검증은 HospitalStore 초기화(init()) 시 이미 수행됨
+  //       유효한 토큰 → hydrated=true 시 이미 session 복원 완료 상태
+  //       → LoginScreen에 도달했다는 것 자체가 토큰이 만료됐거나 없다는 의미
 
   const onSubmit = async () => {
     setLoading(true);
@@ -32,7 +31,7 @@ export function LoginScreen() {
       const serverMsg = String(serverResult?.message ?? "");
       const isNetworkError = /failed to fetch|networkerror|load failed|fetch/i.test(serverMsg);
 
-      // 회장님 요청 반영: 실서버 실패 시(네트워크/인증/응답 오류 포함) 데모 로그인도 자동 시도
+      // 실서버 실패 시(네트워크/인증/응답 오류 포함) 데모 로그인도 자동 시도
       const demoResult = loginWithCredentials({ username: trimmedUsername, password });
       if (demoResult.ok) {
         setMsg(isNetworkError

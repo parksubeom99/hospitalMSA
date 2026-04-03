@@ -106,7 +106,8 @@ public class SoapNoteService {
      * DIAGNOSTIC_ORDER_SUBMITTED 이벤트 발행 시도
      *
      * - SOAP과 검사요청이 모두 완료된 시점에 단 한 번 발행 (idempotent)
-     * - orderRepo.findByVisitIdAndDeletedFalse로 진단용 오더 존재 여부 확인
+     * - visitStatusSvc.markExamRequested() false 반환 = 이미 전환됨 → skip
+     * [MODIFIED] record → recordIfAbsent: Outbox 레벨 중복 발행 방지 추가
      */
     private void tryAdvanceToDiagnosticSubmitted(Long visitId) {
         try {
@@ -120,18 +121,18 @@ public class SoapNoteService {
 
             if (transitioned) {
                 visitStatusSvc.markExamInProgress(visitId);
-                outbox.record(
+                // [MODIFIED] record → recordIfAbsent: 동일 visitId 중복 발행 차단
+                outbox.recordIfAbsent(
                         "DIAGNOSTIC_ORDER_SUBMITTED",
                         "VISIT",
                         String.valueOf(visitId),
-                        String.valueOf(visitId),
+                        String.valueOf(visitId), // partitionKey = visitId
                         topicDiagnosticSubmitted,
                         Map.of("visitId", visitId, "triggeredBy", "SOAP_SAVED")
                 );
                 log.info("[Phase2] DIAGNOSTIC_ORDER_SUBMITTED published. visitId={}", visitId);
             }
         } catch (Exception e) {
-            // 이벤트 발행 실패가 SOAP 저장 트랜잭션을 롤백하지 않도록 catch
             log.warn("[Phase2] Failed to publish DIAGNOSTIC_ORDER_SUBMITTED. visitId={}", visitId, e);
         }
     }

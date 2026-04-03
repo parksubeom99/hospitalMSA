@@ -13,10 +13,12 @@ export type QueueSummaryServer = {
 };
 
 export async function fetchQueueSummaryServer(category: string): Promise<QueueSummaryServer> {
-  const payload = await fetchJsonWithAuth<any>(
+  const raw = await fetchJsonWithAuth<any>(
     `${ADMIN_BASE}/admin/queue/summary?category=${encodeURIComponent(category)}`,
     { method: "GET" },
   );
+  // [FIXED] ApiResponseAdvice 래핑 언래핑
+  const payload = raw?.data ?? raw;
 
   return {
     category: String(payload?.category ?? category),

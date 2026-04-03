@@ -106,6 +106,7 @@ public class OrderService {
      * - SOAP 먼저 → 검사오더 저장 시 여기서 발행
      * - 검사오더 먼저 → SOAP 저장 시 SoapNoteService에서 발행
      * - visitStatusSvc.markExamRequested()가 false 반환 = 이미 발행됨 → 무시 (idempotent)
+     * [MODIFIED] record → recordIfAbsent: Outbox 레벨 중복 발행 방지 추가
      */
     private void tryAdvanceToDiagnosticSubmitted(Long visitId) {
         try {
@@ -115,11 +116,12 @@ public class OrderService {
             boolean transitioned = visitStatusSvc.markExamRequested(visitId);
             if (transitioned) {
                 visitStatusSvc.markExamInProgress(visitId);
-                outbox.record(
+                // [MODIFIED] record → recordIfAbsent: 동일 visitId 중복 발행 차단
+                outbox.recordIfAbsent(
                         "DIAGNOSTIC_ORDER_SUBMITTED",
                         "VISIT",
                         String.valueOf(visitId),
-                        String.valueOf(visitId),
+                        String.valueOf(visitId), // partitionKey = visitId
                         topicDiagnosticSubmitted,
                         Map.of("visitId", visitId, "triggeredBy", "EXAM_ORDER_SAVED")
                 );
