@@ -22,6 +22,7 @@ csBackend/**/out/
 csBackend/**/*.class
 csBackend/**/*.jar
 csBackend/**/*.war
+!csBackend/**/gradle/wrapper/gradle-wrapper.jar
 HELP.md
 
 # ── Next.js ─────────────────────────────────────────────────
