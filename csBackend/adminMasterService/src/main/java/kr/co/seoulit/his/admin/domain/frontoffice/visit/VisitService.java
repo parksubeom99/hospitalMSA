@@ -9,12 +9,15 @@ import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitCreateRequest;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitResponse;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitStatusUpdateRequest;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitUpdateRequest;
+import kr.co.seoulit.his.admin.messaging.outbox.OutboxService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -26,6 +29,11 @@ public class VisitService {
     private final InvoiceRepository invoices;
     private final QueueService queue;
     private final AuditClient audit;
+    // [ADDED] Phase 2-C: VISIT_REGISTERED Outbox 발행
+    private final OutboxService outbox;
+
+    @Value("${kafka.topic.his-visit-registered:his.adminmaster.visit.registered}")
+    private String topicVisitRegistered;
 
     @Transactional
     public VisitResponse create(VisitCreateRequest req) {
@@ -55,6 +63,23 @@ public class VisitService {
 
         audit.write("VISIT_CREATED", "VISIT", String.valueOf(saved.getVisitId()), null,
                 Map.of("patientId", String.valueOf(saved.getPatientId()), "status", saved.getStatus(), "category", category));
+
+        // [ADDED] Phase 2-C: VISIT_REGISTERED 이벤트 발행 (Outbox Pattern)
+        // → clinicalService가 수신 후 visit_clinical_status INSERT (WAITING)
+        // Map.of()는 null 값 불허 → HashMap 사용
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("visitId", saved.getVisitId());
+        payload.put("patientId", saved.getPatientId());
+        payload.put("patientName", saved.getPatientName());
+        payload.put("status", "WAITING");
+        outbox.record(
+                "VISIT_REGISTERED",
+                "VISIT",
+                String.valueOf(saved.getVisitId()),
+                String.valueOf(saved.getVisitId()),
+                topicVisitRegistered,
+                payload
+        );
 
         return toResponse(saved);
     }
