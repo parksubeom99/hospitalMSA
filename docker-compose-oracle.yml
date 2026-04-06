@@ -1,17 +1,21 @@
 # =============================================================================
 # psbMSA Hospital MSA — Docker Compose (Oracle Edition)
 # [ADDED] MySQL → Oracle XE 21c 교체 버전
+# [ADDED] Phase 2-E: Grafana + Tempo 관측성 컨테이너 추가
 # 사용법: docker compose -f docker-compose-oracle.yml up --build
 #
 # 외부 노출 포트:
 #   8180 → gatewayService  (백엔드 단일 진입점)
 #   3000 → csFrontend      (Next.js 프론트)
 #   1522 → Oracle XE       (로컬 디버깅용 — 운영 시 제거)
+#   3001 → Grafana         (관측성 대시보드 — Phase 2-E)
+#   3200 → Tempo           (Trace 백엔드 — Phase 2-E)
 #
 # 내부 전용 (호스트 미노출):
 #   8181 iamService / 8182 adminMasterService
 #   8183 clinicalService / 8184 supportService
 #   6379 Redis / 9092 Kafka
+#   4317 Tempo OTLP gRPC (내부 전용)
 #
 # [NOTE] Oracle XE 21c 제약:
 #   - CPU 2코어 / RAM 2GB / DB 크기 12GB
@@ -37,24 +41,13 @@ services:
       ORACLE_CHARACTERSET: AL32UTF8
       TZ: Asia/Seoul
     volumes:
-      # [MODIFIED] setup → startup 경로로 변경
-      # Oracle XE 21c 이미지는 DB가 이미 생성된 상태로 패키징됨
-      # → setup(최초 DB 생성 후 1회) 조건을 절대 만족하지 못함
-      # → startup(매 기동마다 실행)으로 변경
-      # 유저 생성 스크립트는 EXCEPTION -01920 패턴으로 중복 실행 안전
       - ./docker/oracle/init:/opt/oracle/scripts/startup:ro
       - oracle-data:/opt/oracle/oradata
     ports:
-      # [MODIFIED] 1521 → 1522 (로컬 Oracle TNS Listener 포트 충돌 회피)
       - "1522:1521"
     networks:
       - psb-net
     healthcheck:
-      # [MODIFIED] sqlplus 직접 호출 → /opt/oracle/checkDBStatus.sh 로 교체
-      # 이유: sqlplus 는 PATH 미등록 시점에 호출되면 command not found 로 즉시 실패
-      # checkDBStatus.sh: Oracle XE 21c 공식 이미지 내장 스크립트, DB OPEN 시 exit 0 반환
-      # [MODIFIED] start_period: 120s → 300s
-      # 이유: Oracle XE 최초 기동(DB 생성) + setup 스크립트 실행까지 3~5분 소요
       test: ["CMD", "/opt/oracle/checkDBStatus.sh"]
       interval: 30s
       timeout: 20s
@@ -139,6 +132,54 @@ services:
       start_period: 30s
 
   # ──────────────────────────────────────────────────────────
+  # OBSERVABILITY: Tempo (Distributed Tracing Backend)
+  # [ADDED] Phase 2-E: Spring Boot → OTLP gRPC → Tempo → Grafana
+  # ──────────────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:2.4.1
+    container_name: psb-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # HTTP API (Grafana datasource)
+      - "4317:4317"   # OTLP gRPC (Spring Boot → Tempo)
+    networks:
+      - psb-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3200/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ──────────────────────────────────────────────────────────
+  # OBSERVABILITY: Grafana (Dashboard UI)
+  # [ADDED] Phase 2-E: Tempo datasource 자동 프로비저닝
+  # ──────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: psb-grafana
+    restart: unless-stopped
+    depends_on:
+      tempo:
+        condition: service_healthy
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      TZ: Asia/Seoul
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"   # 호스트 3001 → Grafana 3000 (프론트 3000 충돌 회피)
+    networks:
+      - psb-net
+
+  # ──────────────────────────────────────────────────────────
   # BACKEND: iamService (Oracle 프로파일)
   # ──────────────────────────────────────────────────────────
   iam-service:
@@ -153,7 +194,6 @@ services:
       redis:
         condition: service_healthy
     environment:
-      # [MODIFIED] MYSQL_* → ORACLE_* 환경변수
       ORACLE_HOST: oracle
       ORACLE_PORT: 1521
       ORACLE_SID: XEPDB1
@@ -176,6 +216,7 @@ services:
 
   # ──────────────────────────────────────────────────────────
   # BACKEND: adminMasterService (Oracle 프로파일)
+  # [ADDED] Phase 2-E: OTEL_EXPORTER_OTLP_ENDPOINT 환경변수 추가
   # ──────────────────────────────────────────────────────────
   admin-master-service:
     build:
@@ -190,6 +231,8 @@ services:
         condition: service_healthy
       iam-service:
         condition: service_healthy
+      tempo:
+        condition: service_healthy
     environment:
       ORACLE_HOST: oracle
       ORACLE_PORT: 1521
@@ -202,6 +245,8 @@ services:
       CLINICAL_BASE_URL: http://clinical-service:8183
       SUPPORT_BASE_URL: http://support-service:8184
       SPRING_PROFILES_ACTIVE: oracle
+      # [ADDED] Phase 2-E: Tempo OTLP 엔드포인트
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       TZ: Asia/Seoul
     networks:
       - psb-net
@@ -214,6 +259,7 @@ services:
 
   # ──────────────────────────────────────────────────────────
   # BACKEND: clinicalService (Oracle 프로파일)
+  # [ADDED] Phase 2-E: OTEL_EXPORTER_OTLP_ENDPOINT 환경변수 추가
   # ──────────────────────────────────────────────────────────
   clinical-service:
     build:
@@ -228,6 +274,8 @@ services:
         condition: service_healthy
       iam-service:
         condition: service_healthy
+      tempo:
+        condition: service_healthy
     environment:
       ORACLE_HOST: oracle
       ORACLE_PORT: 1521
@@ -240,6 +288,8 @@ services:
       ADMIN_BASE_URL: http://admin-master-service:8182
       SUPPORT_BASE_URL: http://support-service:8184
       SPRING_PROFILES_ACTIVE: oracle
+      # [ADDED] Phase 2-E: Tempo OTLP 엔드포인트
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       TZ: Asia/Seoul
     networks:
       - psb-net
@@ -345,7 +395,7 @@ networks:
 
 # ──────────────────────────────────────────────────────────
 # VOLUMES
-# [MODIFIED] mysql-data → oracle-data
+# [ADDED] Phase 2-E: tempo-data, grafana-data 추가
 # ──────────────────────────────────────────────────────────
 volumes:
   oracle-data:
@@ -353,3 +403,5 @@ volumes:
   kafka-data:
   zookeeper-data:
   zookeeper-log:
+  tempo-data:
+  grafana-data:
