@@ -216,7 +216,6 @@ services:
 
   # ──────────────────────────────────────────────────────────
   # BACKEND: adminMasterService (Oracle 프로파일)
-  # [ADDED] Phase 2-E: OTEL_EXPORTER_OTLP_ENDPOINT 환경변수 추가
   # ──────────────────────────────────────────────────────────
   admin-master-service:
     build:
@@ -246,7 +245,6 @@ services:
       SUPPORT_BASE_URL: http://support-service:8184
       SPRING_PROFILES_ACTIVE: oracle
       # [ADDED] Phase 2-E: Tempo OTLP 엔드포인트
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       TZ: Asia/Seoul
     networks:
       - psb-net
@@ -259,7 +257,6 @@ services:
 
   # ──────────────────────────────────────────────────────────
   # BACKEND: clinicalService (Oracle 프로파일)
-  # [ADDED] Phase 2-E: OTEL_EXPORTER_OTLP_ENDPOINT 환경변수 추가
   # ──────────────────────────────────────────────────────────
   clinical-service:
     build:
@@ -289,7 +286,6 @@ services:
       SUPPORT_BASE_URL: http://support-service:8184
       SPRING_PROFILES_ACTIVE: oracle
       # [ADDED] Phase 2-E: Tempo OTLP 엔드포인트
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       TZ: Asia/Seoul
     networks:
       - psb-net
