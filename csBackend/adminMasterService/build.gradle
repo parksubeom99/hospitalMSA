@@ -25,12 +25,11 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.flywaydb:flyway-core'
-    implementation 'org.flywaydb:flyway-mysql' // [ADDED] Flyway 10+ MySQL 지원 모듈
+    // [REMOVED] flyway-mysql, mysql-connector-j — Oracle Edition 전용
     // [ADDED] Oracle JDBC 드라이버
     implementation 'com.oracle.database.jdbc:ojdbc11:23.3.0.23.09'
     // [ADDED] Flyway Oracle 지원 모듈 (Flyway 10+)
     implementation 'org.flywaydb:flyway-database-oracle'
-    runtimeOnly 'com.mysql:mysql-connector-j'
 
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.kafka:spring-kafka'
