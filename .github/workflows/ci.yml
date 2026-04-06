@@ -30,6 +30,10 @@ jobs:
           key: gradle-admin-${{ hashFiles('csBackend/adminMasterService/**/*.gradle*') }}
           restore-keys: gradle-admin-
 
+      - name: gradlew 실행 권한 부여
+        working-directory: csBackend/adminMasterService
+        run: chmod +x gradlew
+
       - name: VisitServiceTest 실행
         working-directory: csBackend/adminMasterService
         run: ./gradlew test --tests "*.VisitServiceTest" --no-daemon
@@ -63,6 +67,10 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-clinical-${{ hashFiles('csBackend/clinicalService/**/*.gradle*') }}
           restore-keys: gradle-clinical-
+
+      - name: gradlew 실행 권한 부여
+        working-directory: csBackend/clinicalService
+        run: chmod +x gradlew
 
       - name: VisitRegisteredConsumerTest 실행
         working-directory: csBackend/clinicalService
