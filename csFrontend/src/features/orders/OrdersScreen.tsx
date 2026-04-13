@@ -1,5 +1,22 @@
 "use client";
 
+// [MODIFIED] 날짜 기본값 → 오늘 KST 기준
+function todayKST(): Date {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000);
+}
+function todayStr(): string {
+  return todayKST().toISOString().slice(0, 10);
+}
+function todayPlusDays(n: number): string {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000 + n * 86400000).toISOString().slice(0, 10);
+}
+function todayNextHour(): string {
+  const d = todayKST();
+  d.setUTCMinutes(0, 0, 0);
+  d.setUTCHours(d.getUTCHours() + 1);
+  return d.toISOString().slice(0, 16);
+}
+
 import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "@/shared/components/GlassCard";
 import { RoleGate } from "@/shared/components/RoleGate";
@@ -42,8 +59,8 @@ export function OrdersScreen() {
   const [surgeryType, setSurgeryType] = useState<"INTERNAL" | "EXTERNAL">("INTERNAL");
   const [roomNo, setRoomNo] = useState<number>(1);
   const [wardNo, setWardNo] = useState<number>(1);
-  const [admitDate, setAdmitDate] = useState<string>("2026-03-11");
-  const [dischargeDate, setDischargeDate] = useState<string>("2026-03-14");
+  const [admitDate, setAdmitDate] = useState<string>(todayStr());
+  const [dischargeDate, setDischargeDate] = useState<string>(todayPlusDays(3));
   const [message, setMessage] = useState("");
   const [serverWriteEnabled, setServerWriteEnabled] = useState(false);
   const [serverSyncEnabled, setServerSyncEnabled] = useState(false);
@@ -59,8 +76,8 @@ export function OrdersScreen() {
     setSurgeryType(fo.surgery?.surgeryType ?? "INTERNAL");
     setRoomNo(fo.surgery?.roomNo ?? 1);
     setWardNo(fo.admission?.wardNo ?? 1);
-    setAdmitDate(fo.admission?.admitDate ?? "2026-03-11");
-    setDischargeDate(fo.admission?.dischargeDate ?? "2026-03-14");
+    setAdmitDate(fo.admission?.admitDate ?? todayStr());
+    setDischargeDate(fo.admission?.dischargeDate ?? todayPlusDays(3));
   }, [visitId, state.finalOrders]);
 
   const visit = activeVisits.find(v => v.id === visitId);
@@ -163,15 +180,7 @@ export function OrdersScreen() {
         <GlassCard title="오더 (최종처방)" subtitle="약 / 주사 / 수술 / 입원 / 이상소견없음(NONE)">
           <div className="form-grid tri">
             <div className="inline-check-group" style={{ gridColumn: "1 / -1" }}>
-              <label className={`pill-check ${serverWriteEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverWriteEnabled} onChange={(e) => setServerWriteEnabled(e.target.checked)} />
-                <span>실서버 저장/확정 모드</span>
-              </label>
-              <label className={`pill-check ${serverSyncEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverSyncEnabled} onChange={(e) => setServerSyncEnabled(e.target.checked)} />
-                <span>실서버 동기화 모드</span>
-              </label>
-              <button type="button" onClick={() => void syncFinalOrdersFromServer()} disabled={syncLoading}>동기화 실행</button>
+              <button type="button" onClick={() => { setServerWriteEnabled(true); setServerSyncEnabled(true); void syncFinalOrdersFromServer(); }} disabled={syncLoading}>{syncLoading ? "동기화 중..." : "서버 동기화"}</button>
               <small className="muted">서버요약: {serverFinalSummary}</small>
             </div>
             <label>

@@ -1,43 +1,14 @@
 # ============================================================
-# psbMSA Hospital MSA — Docker Compose (Full Stack)
+# psbMSA Hospital MSA — Docker Compose (AWS 배포용)
+# MySQL 컨테이너 제거 → RDS 연결
+# Grafana/Tempo 제거 → 로컬 시연 (t3.small 메모리 한계)
 # ============================================================
 # 외부 노출 포트:
 #   8180 → gatewayService  (백엔드 단일 진입점)
 #   3000 → csFrontend      (Next.js 프론트)
-#
-# 내부 전용 (호스트 미노출):
-#   8181 iamService / 8182 adminMasterService
-#   8183 clinicalService / 8184 supportService
-#   3306 MySQL / 6379 Redis / 9092 Kafka
 # ============================================================
 
 services:
-
-  # ──────────────────────────────────────────────────────────
-  # INFRA: MySQL
-  # ──────────────────────────────────────────────────────────
-  mysql:
-    image: mysql:8.0
-    container_name: psb-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      TZ: Asia/Seoul
-    volumes:
-      # 4개 DB 초기화 스크립트
-      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
-      # 데이터 영속화
-      - mysql-data:/var/lib/mysql
-    networks:
-      - psb-net
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
 
   # ──────────────────────────────────────────────────────────
   # INFRA: Redis
@@ -70,7 +41,6 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-      # [MODIFIED] cp-zookeeper:7.x 전용 환경변수로 교체 — KAFKA_OPTS 방식은 이미지에 따라 무시될 수 있음
       ZOOKEEPER_4LW_COMMANDS_WHITELIST: "*"
       TZ: Asia/Seoul
     volumes:
@@ -79,7 +49,6 @@ services:
     networks:
       - psb-net
     healthcheck:
-      # [MODIFIED] ruok → srvr: cp-zookeeper:7.x 이미지 내부 whitelist에 srvr만 활성화됨
       test: ["CMD", "bash", "-c", "echo srvr | nc localhost 2181 | grep -q 'Zookeeper version'"]
       interval: 10s
       timeout: 5s
@@ -99,19 +68,15 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      # 내부(컨테이너간): PLAINTEXT://kafka:9092
-      # 외부(호스트 디버깅용): PLAINTEXT_HOST://localhost:29092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_HEAP_OPTS: "-Xmx256m -Xms128m"
       TZ: Asia/Seoul
     volumes:
       - kafka-data:/var/lib/kafka/data
-    ports:
-      # 호스트에서 Kafka 직접 접근이 필요할 때만 (디버깅용)
-      - "29092:29092"
     networks:
       - psb-net
     healthcheck:
@@ -131,12 +96,12 @@ services:
     container_name: psb-iam
     restart: unless-stopped
     depends_on:
-      mysql:
-        condition: service_healthy
       redis:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
     environment:
-      MYSQL_HOST: mysql
+      MYSQL_HOST: ${MYSQL_HOST}
       MYSQL_PORT: 3306
       MYSQL_DB: hospitalmsa_iam
       MYSQL_USER: ${MYSQL_USER}
@@ -145,11 +110,12 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       HIS_JWT_SECRET: ${HIS_JWT_SECRET}
+      JAVA_OPTS: "-Xmx256m -Xms128m"
       TZ: Asia/Seoul
     networks:
       - psb-net
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8181"]  # [MODIFIED] wget없음→nc TCP포트체크
+      test: ["CMD", "nc", "-z", "localhost", "8181"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -165,14 +131,12 @@ services:
     container_name: psb-admin
     restart: unless-stopped
     depends_on:
-      mysql:
-        condition: service_healthy
       kafka:
         condition: service_healthy
       iam-service:
         condition: service_healthy
     environment:
-      MYSQL_HOST: mysql
+      MYSQL_HOST: ${MYSQL_HOST}
       MYSQL_PORT: 3306
       MYSQL_DB: hospitalmsa_admin
       MYSQL_USER: ${MYSQL_USER}
@@ -182,15 +146,16 @@ services:
       IAM_BASE_URL: http://iam-service:8181
       CLINICAL_BASE_URL: http://clinical-service:8183
       SUPPORT_BASE_URL: http://support-service:8184
+      JAVA_OPTS: "-Xmx256m -Xms128m"
       TZ: Asia/Seoul
     networks:
       - psb-net
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8182"]  # [MODIFIED] wget없음→nc TCP포트체크
+      test: ["CMD", "nc", "-z", "localhost", "8182"]
       interval: 15s
       timeout: 5s
-      retries: 10  # [MODIFIED]
-      start_period: 90s  # [MODIFIED]
+      retries: 10
+      start_period: 90s
 
   # ──────────────────────────────────────────────────────────
   # BACKEND: clinicalService (8183 — 내부 전용)
@@ -202,14 +167,12 @@ services:
     container_name: psb-clinical
     restart: unless-stopped
     depends_on:
-      mysql:
-        condition: service_healthy
       kafka:
         condition: service_healthy
       iam-service:
         condition: service_healthy
     environment:
-      MYSQL_HOST: mysql
+      MYSQL_HOST: ${MYSQL_HOST}
       MYSQL_PORT: 3306
       MYSQL_DB: hospitalmsa_clinical
       MYSQL_USER: ${MYSQL_USER}
@@ -219,15 +182,16 @@ services:
       IAM_BASE_URL: http://iam-service:8181
       ADMIN_BASE_URL: http://admin-master-service:8182
       SUPPORT_BASE_URL: http://support-service:8184
+      JAVA_OPTS: "-Xmx256m -Xms128m"
       TZ: Asia/Seoul
     networks:
       - psb-net
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8183"]  # [MODIFIED] wget없음→nc TCP포트체크
+      test: ["CMD", "nc", "-z", "localhost", "8183"]
       interval: 15s
       timeout: 5s
-      retries: 10  # [MODIFIED]
-      start_period: 90s  # [MODIFIED]
+      retries: 10
+      start_period: 90s
 
   # ──────────────────────────────────────────────────────────
   # BACKEND: supportService (8184 — 내부 전용)
@@ -239,14 +203,12 @@ services:
     container_name: psb-support
     restart: unless-stopped
     depends_on:
-      mysql:
-        condition: service_healthy
       kafka:
         condition: service_healthy
       iam-service:
         condition: service_healthy
     environment:
-      MYSQL_HOST: mysql
+      MYSQL_HOST: ${MYSQL_HOST}
       MYSQL_PORT: 3306
       MYSQL_DB: hospitalmsa_support
       MYSQL_USER: ${MYSQL_USER}
@@ -255,15 +217,16 @@ services:
       HIS_JWT_SECRET: ${HIS_JWT_SECRET}
       IAM_BASE_URL: http://iam-service:8181
       ORDER_BASE_URL: http://clinical-service:8183
+      JAVA_OPTS: "-Xmx256m -Xms128m"
       TZ: Asia/Seoul
     networks:
       - psb-net
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "8184"]  # [MODIFIED] wget없음→nc TCP포트체크
+      test: ["CMD", "nc", "-z", "localhost", "8184"]
       interval: 15s
       timeout: 5s
-      retries: 10  # [MODIFIED]
-      start_period: 90s  # [MODIFIED]
+      retries: 10
+      start_period: 90s
 
   # ──────────────────────────────────────────────────────────
   # BACKEND: gatewayService (8180 — 외부 노출)
@@ -292,7 +255,6 @@ services:
       HIS_JWT_SECRET: ${HIS_JWT_SECRET}
       TZ: Asia/Seoul
     ports:
-      # 브라우저 → Gateway 단일 진입점
       - "8180:8180"
     networks:
       - psb-net
@@ -305,9 +267,7 @@ services:
       context: ./csFrontend
       dockerfile: Dockerfile
       args:
-        # NEXT_PUBLIC_ 변수는 빌드 타임에 번들 포함
-        # 브라우저가 직접 호출하므로 localhost 유지
-        NEXT_PUBLIC_GATEWAY_URL: http://localhost:8180
+        NEXT_PUBLIC_GATEWAY_URL: ${NEXT_PUBLIC_GATEWAY_URL}
     container_name: psb-frontend
     restart: unless-stopped
     depends_on:
@@ -328,7 +288,6 @@ networks:
 # VOLUMES
 # ──────────────────────────────────────────────────────────
 volumes:
-  mysql-data:
   redis-data:
   kafka-data:
   zookeeper-data:

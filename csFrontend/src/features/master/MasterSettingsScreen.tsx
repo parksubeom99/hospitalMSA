@@ -277,13 +277,7 @@ export function MasterSettingsScreen() {
       <div className="page-grid page-grid--readable">
         <GlassCard title="마스터 설정" subtitle="의사/원무 직원 프로필 조회·등록·수정·삭제 (사진/MinIO는 후속)">
           <div className="button-row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
-            <button type="button" className={serverMode ? "active-btn" : ""} onClick={toggleServerMode}>
-              {serverMode ? "실서버 CRUD 모드 ON" : "실서버 CRUD 모드 OFF"}
-            </button>
-            <button type="button" className={autoSync ? "active-btn" : ""} onClick={toggleAutoSync}>
-              자동 동기화 {autoSync ? "ON" : "OFF"}
-            </button>
-            <button type="button" onClick={() => void syncFromServer()} disabled={serverBusy}>직원 동기화</button>
+            <button type="button" onClick={() => { if (!serverMode) toggleServerMode(); void syncFromServer(); }} disabled={serverBusy}>{serverBusy ? "동기화 중..." : "직원 동기화"}</button>
             {serverBusy && <span className="inline-muted">동기화/저장 중...</span>}
             {!isServerSession && <span className="inline-muted">현재 세션: 데모 로그인</span>}
             {!!serverLastSyncAt && <span className="inline-muted">최근 동기화: {serverLastSyncAt}</span>}

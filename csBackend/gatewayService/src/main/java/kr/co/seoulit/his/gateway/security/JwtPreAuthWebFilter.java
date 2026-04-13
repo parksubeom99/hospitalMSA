@@ -46,6 +46,9 @@ public class JwtPreAuthWebFilter implements WebFilter {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
+        if (exchange.getRequest().getMethod().name().equals("OPTIONS")) {
+            return chain.filter(exchange);
+        }
         String path = exchange.getRequest().getPath().pathWithinApplication().value();
         if (!requiresJwt(path)) {
             return chain.filter(exchange);

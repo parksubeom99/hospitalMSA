@@ -1,5 +1,22 @@
 "use client";
 
+// [MODIFIED] 날짜 기본값 → 오늘 KST 기준
+function todayKST(): Date {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000);
+}
+function todayStr(): string {
+  return todayKST().toISOString().slice(0, 10);
+}
+function todayPlusDays(n: number): string {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000 + n * 86400000).toISOString().slice(0, 10);
+}
+function todayNextHour(): string {
+  const d = todayKST();
+  d.setUTCMinutes(0, 0, 0);
+  d.setUTCHours(d.getUTCHours() + 1);
+  return d.toISOString().slice(0, 16);
+}
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GlassCard } from "@/shared/components/GlassCard";
 import { RoleGate } from "@/shared/components/RoleGate";
@@ -42,7 +59,7 @@ export function ReceptionScreen() {
   const [tab, setTab] = useState<ReceptionTab>("RESERVATION");
   const [toast, setToast] = useState("");
 
-  const [reservationForm, setReservationForm] = useState({ name: "", phone: "", reservedAt: "2026-03-11T10:30" });
+  const [reservationForm, setReservationForm] = useState({ name: "", phone: "", reservedAt: todayNextHour() });
   const [editingReservationId, setEditingReservationId] = useState<number | null>(null);
 
   const activeReservations = useMemo(
@@ -88,7 +105,7 @@ export function ReceptionScreen() {
 
   const resetReservationForm = () => {
     setEditingReservationId(null);
-    setReservationForm({ name: "", phone: "", reservedAt: "2026-03-11T10:30" });
+    setReservationForm({ name: "", phone: "", reservedAt: todayNextHour() });
   };
 
   const resetVisitForm = () => {

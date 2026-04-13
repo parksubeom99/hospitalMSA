@@ -149,15 +149,7 @@ export function BillingScreen() {
         <GlassCard title="수납" subtitle="최종오더 결과 기반 영수증 자동 산출 / 결제 처리">
           <div className="form-grid tri">
             <div className="inline-check-group" style={{ gridColumn: "1 / -1" }}>
-              <label className={`pill-check ${serverWriteEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverWriteEnabled} onChange={(e) => setServerWriteEnabled(e.target.checked)} />
-                <span>실서버 저장/결제 모드</span>
-              </label>
-              <label className={`pill-check ${serverSyncEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverSyncEnabled} onChange={(e) => setServerSyncEnabled(e.target.checked)} />
-                <span>실서버 동기화 모드</span>
-              </label>
-              <button type="button" onClick={() => void syncBillingFromServer()} disabled={syncLoading}>동기화 실행</button>
+              <button type="button" onClick={() => { setServerWriteEnabled(true); setServerSyncEnabled(true); void syncBillingFromServer(); }} disabled={syncLoading}>{syncLoading ? "동기화 중..." : "서버 동기화"}</button>
               {serverSyncedAt && <small className="muted">최근 동기화: {serverSyncedAt}</small>}
             </div>
 

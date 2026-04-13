@@ -10,7 +10,7 @@ type UseDashboardSummaryQueryArgs = {
 };
 
 export function useDashboardSummaryQuery(args: UseDashboardSummaryQueryArgs = {}) {
-  const date = args.date ?? new Date().toISOString().slice(0, 10);
+  const date = args.date ?? new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   return useQuery({
     queryKey: dashboardSummaryQueryKey(date),

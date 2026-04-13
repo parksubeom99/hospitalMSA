@@ -98,15 +98,7 @@ export function ClinicalScreen() {
         <GlassCard title="진료" subtitle="SOAP + 검사/영상(복수 선택) · 의사/시스템관리자 전용">
           <div className="form-grid tri">
             <div className="inline-check-group" style={{ gridColumn: "1 / -1" }}>
-              <label className={`pill-check ${serverWriteEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverWriteEnabled} onChange={(e) => setServerWriteEnabled(e.target.checked)} />
-                <span>실서버 저장 모드</span>
-              </label>
-              <label className={`pill-check ${serverSyncEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverSyncEnabled} onChange={(e) => setServerSyncEnabled(e.target.checked)} />
-                <span>실서버 동기화 모드</span>
-              </label>
-              <button type="button" onClick={() => void syncClinicalFromServer()} disabled={syncLoading}>동기화 실행</button>
+              <button type="button" onClick={() => { setServerWriteEnabled(true); setServerSyncEnabled(true); void syncClinicalFromServer(); }} disabled={syncLoading}>{syncLoading ? "동기화 중..." : "서버 동기화"}</button>
               {serverSyncedAt && <small className="muted">최근 동기화: {serverSyncedAt}</small>}
             </div>
             <label>

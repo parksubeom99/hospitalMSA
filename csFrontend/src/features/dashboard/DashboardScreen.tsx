@@ -107,14 +107,8 @@ export function DashboardScreen() {
         right={<StatusBadge label={`${viewCapacity.level} · ${viewCapacity.canRegister ? "등록 가능" : "등록 차단"}`} tone={levelTone as any} />}
       >
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-          <button className="btn ghost" type="button" onClick={() => setUseServerSummary((v) => !v)}>
-            {useServerSummary ? "실서버 집계 사용 중" : "로컬 집계 사용 중"}
-          </button>
-          <button className="btn ghost" type="button" onClick={() => void syncServerSummary()} disabled={syncing}>
-            {syncing ? "동기화 중..." : "집계 동기화"}
-          </button>
-          <button className="btn ghost" type="button" onClick={() => setAutoSyncServer((v) => !v)}>
-            {autoSyncServer ? "자동 동기화 ON" : "자동 동기화 OFF"}
+          <button className="btn ghost" type="button" onClick={() => { setUseServerSummary(true); setAutoSyncServer(true); void syncServerSummary(); }} disabled={syncing}>
+            {syncing ? "동기화 중..." : "서버 동기화"}
           </button>
           {serverSummary?.generatedAt && (
             <span className="helper-text">서버 집계시각: {formatDateTime(serverSummary.generatedAt)}</span>
