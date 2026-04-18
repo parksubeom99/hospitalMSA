@@ -36,6 +36,7 @@ public class VisitClinicalStatusController {
                     Map<String, Object> map = new java.util.HashMap<>();
                     map.put("visitId", vcs.getVisitId());
                     map.put("clinicalStatus", vcs.getClinicalStatus());
+                    map.put("patientName", vcs.getPatientName());
                     return map;
                 })
                 .collect(Collectors.toList());

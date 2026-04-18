@@ -31,4 +31,7 @@ public class VisitClinicalStatus {
 
     @Column(nullable = false)
     private LocalDateTime updatedAt;
+
+    @Column(name = "patient_name", length = 100)
+    private String patientName;
 }

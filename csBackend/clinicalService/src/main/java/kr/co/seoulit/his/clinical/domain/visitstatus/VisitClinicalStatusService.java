@@ -49,9 +49,20 @@ public class VisitClinicalStatusService {
      */
     @Transactional
     public VisitClinicalStatus initOrGet(Long visitId) {
+        return initOrGet(visitId, null);
+    }
+
+    /**
+     * 초기화 또는 현재 상태 반환 (idempotent) — patientName 포함
+     * Kafka VISIT_REGISTERED 이벤트의 patientName을 visit_clinical_status에 영속화하여
+     * 진료화면 드롭다운에서 환자명 표시를 지원
+     */
+    @Transactional
+    public VisitClinicalStatus initOrGet(Long visitId, String patientName) {
         return repo.findById(visitId).orElseGet(() -> repo.save(
                 VisitClinicalStatus.builder()
                         .visitId(visitId)
+                        .patientName(patientName)
                         .clinicalStatus("SOAP_IN_PROGRESS")
                         .updatedAt(LocalDateTime.now())
                         .build()
