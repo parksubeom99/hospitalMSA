@@ -68,8 +68,9 @@ public class VisitRegisteredConsumer {
             return;
         }
 
-        // visit_clinical_status WAITING 상태로 초기화 (이미 존재하면 그대로 반환)
-        visitStatusSvc.initOrGet(visitId);
+        // visit_clinical_status SOAP_IN_PROGRESS 상태로 초기화 (이미 존재하면 그대로 반환)
+        // patientName을 함께 저장하여 진료화면 드롭다운에서 환자명 표시 지원
+        visitStatusSvc.initOrGet(visitId, patientName);
 
         // 멱등성 기록
         processedRepo.save(ProcessedEvent.builder()
