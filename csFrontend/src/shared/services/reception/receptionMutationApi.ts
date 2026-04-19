@@ -40,7 +40,8 @@ export async function createReservationServer(args: {
     body: JSON.stringify({
       patientId: args.patientId,
       patientName: args.patientName,
-      departmentCode: "IM",
+      // [FIXED] "IM" → "INTERNAL" — DB 시드 department.code와 일치
+      departmentCode: "INTERNAL",
       doctorId: null,
       scheduledAt: args.reservedAtIso,
     }),
@@ -49,6 +50,12 @@ export async function createReservationServer(args: {
 
 export async function checkInReservationServer(args: { session?: HeadersInput; reservationId: number }) {
   return fetchJsonWithAuth<any>(`${ADMIN_BASE}/admin/reservations/${args.reservationId}/check-in`, { method: "POST" });
+}
+
+/** 예약 취소 — 서버에서 BOOKED → CANCELED 상태 변경 */
+export async function cancelReservationServer(args: { session?: HeadersInput; reservationId: number; reason?: string }) {
+  const q = args.reason ? `?reason=${encodeURIComponent(args.reason)}` : "";
+  return fetchJsonWithAuth<any>(`${ADMIN_BASE}/admin/reservations/${args.reservationId}/cancel${q}`, { method: "POST" });
 }
 
 export async function cancelVisitServer(args: { session?: HeadersInput; visitId: number; reason?: string }) {
@@ -67,7 +74,8 @@ export async function createVisitServer(args: {
     body: JSON.stringify({
       patientId: args.patientId,
       patientName: args.patientName,
-      departmentCode: "IM",
+      // [FIXED] "IM" → "INTERNAL" — DB 시드 department.code와 일치
+      departmentCode: "INTERNAL",
       doctorId: null,
       arrivalType: args.mode === "WALK_IN" ? "WALK_IN" : "RESERVATION",
       triageLevel: null,
@@ -84,7 +92,8 @@ export async function updateVisitServer(args: {
     method: "PUT",
     body: JSON.stringify({
       patientName: args.patientName,
-      departmentCode: "IM",
+      // [FIXED] "IM" → "INTERNAL" — DB 시드 department.code와 일치
+      departmentCode: "INTERNAL",
       doctorId: null,
       arrivalType: null,
       triageLevel: null,

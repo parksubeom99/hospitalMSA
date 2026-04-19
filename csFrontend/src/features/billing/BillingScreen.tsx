@@ -20,19 +20,26 @@ function backendInvoiceStatusLabel(status?: string) {
 
 export function BillingScreen() {
   const { state, patientsById, generateInvoiceFromFinalOrder, payInvoice, updateVisitStatus } = useHospital();
+
+  // [MODIFIED] COMPLETED 환자를 드롭다운에서 제외
+  // 도메인 규칙: 수납 완료(COMPLETED) = 방문 종료. 재선택 방지.
+  const billableVisits = useMemo(() =>
+    state.visits.filter(v => v.status !== "COMPLETED"),
+    [state.visits]
+  );
+
   const [visitId, setVisitId] = useState<number>(() => {
     const withFinalOrder = Object.keys(state.finalOrders).map(Number);
-    return withFinalOrder[0] ?? state.visits[0]?.id ?? 0;
+    // [MODIFIED] COMPLETED 제외된 목록에서 초기값 선택
+    const firstBillable = billableVisits[0]?.id ?? 0;
+    return withFinalOrder.find(id => billableVisits.some(v => v.id === id)) ?? firstBillable;
   });
   const [message, setMessage] = useState("");
-  // [MODIFIED] 체크박스 2개 → 동기화 버튼 1개로 단순화
-  // 실서버 저장/결제: 세션 accessToken 존재 시 자동 활성화
-  const serverWriteEnabled = state.session?.authSource === "server"; // [FIXED] accessToken → authSource 기준으로 통일
-  // [MODIFIED] useState(syncLoading/serverSyncedAt/serverInvoices) → React Query로 대체
-  const invoicesQuery = useInvoicesQuery({ visitId }); // [ADDED]
-  const syncLoading = invoicesQuery.isFetching; // [MODIFIED]
+  const serverWriteEnabled = state.session?.authSource === "server";
+  const invoicesQuery = useInvoicesQuery({ visitId });
+  const syncLoading = invoicesQuery.isFetching;
   const [serverSyncedAt, setServerSyncedAt] = useState<string | null>(null);
-  const serverInvoices: BackendInvoice[] = invoicesQuery.data ?? []; // [MODIFIED]
+  const serverInvoices: BackendInvoice[] = invoicesQuery.data ?? [];
   const [lastServerPayment, setLastServerPayment] = useState<{ paymentId: number; method: string; paidAt?: string } | null>(null);
 
   const targetVisit = state.visits.find((v) => v.id === visitId);
@@ -57,12 +64,11 @@ export function BillingScreen() {
     window.setTimeout(() => setMessage(""), 2400);
   };
 
-  // [MODIFIED] 직접 fetch → React Query refetch() 위임
   const syncBillingFromServer = async () => {
     if (!state.session?.accessToken) return emit("실서버 IAM 로그인 후 동기화 가능합니다.");
     if (!visitId) return emit("접수를 먼저 선택해주세요.");
     try {
-      const result = await invoicesQuery.refetch(); // [MODIFIED]
+      const result = await invoicesQuery.refetch();
       const list = result.data ?? [];
       setServerSyncedAt(new Date().toLocaleTimeString("ko-KR"));
       emit(`실서버 수납 동기화 완료 (청구 ${list.length}건)`);
@@ -70,8 +76,6 @@ export function BillingScreen() {
       emit(`실서버 수납 동기화 실패: ${e?.message || e}`);
     }
   };
-
-  // [REMOVED] serverSyncEnabled useEffect 제거 — 버튼 클릭으로만 동기화
 
   const handleGenerateInvoice = async () => {
     try {
@@ -104,15 +108,13 @@ export function BillingScreen() {
 
       if (!state.session?.accessToken) return emit("실서버 저장 모드는 IAM 로그인 후 사용 가능합니다.");
 
-      // [FIX] 실서버 Invoice가 없으면 먼저 동기화 후 재확인
       if (!latestServerInvoice) {
         emit("실서버 영수증을 조회 중...");
         await syncBillingFromServer();
-        return; // 동기화 후 재렌더링되면 다시 버튼 클릭
+        return;
       }
 
       const target = latestServerInvoice;
-      // [FIX] invoiceId 유효성 검증
       if (!target.invoiceId || target.invoiceId <= 0) {
         return emit(`실서버 영수증 ID가 유효하지 않습니다. invoiceId=${target.invoiceId}`);
       }
@@ -127,7 +129,6 @@ export function BillingScreen() {
       });
       setLastServerPayment({ paymentId: payment.paymentId, method: payment.method, paidAt: payment.paidAt });
 
-      // 로컬 UI도 즉시 반영(다음 단계 전 화면 안정성 유지)
       if (latestInvoice && latestInvoice.status !== "PAID") {
         payInvoice(latestInvoice.invoiceId, method);
       } else {
@@ -147,7 +148,6 @@ export function BillingScreen() {
         <GlassCard title="수납" subtitle="최종오더 결과 기반 영수증 자동 산출 / 결제 처리">
           <div className="form-grid tri">
             <div className="inline-check-group" style={{ gridColumn: "1 / -1" }}>
-              {/* [MODIFIED] 체크박스 2개 → 동기화 버튼 1개 */}
               <button type="button" onClick={() => void syncBillingFromServer()} disabled={syncLoading}>동기화 실행</button>
               {serverWriteEnabled && <small className="muted">실서버 저장/결제 모드 활성</small>}
               {serverSyncedAt && <small className="muted">최근 동기화: {serverSyncedAt}</small>}
@@ -156,7 +156,8 @@ export function BillingScreen() {
             <label>
               <span>접수 선택</span>
               <select value={visitId} onChange={(e) => setVisitId(Number(e.target.value))}>
-                {state.visits.map((v) => (
+                {/* [MODIFIED] COMPLETED 제외 — 수납 완료 환자는 드롭다운에서 숨김 */}
+                {billableVisits.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.id} / {patientsById[v.patientId]?.name ?? "-"} / {STATUS_LABEL[v.status]}
                   </option>

@@ -18,8 +18,9 @@ import {
 import { getTodayKST } from "@/shared/lib/date"; // [ADDED] UTC/KST 버그 #3 차단
 
 // ── Query Keys ──────────────────────────────────────────────
+// [MODIFIED v3.3] reservations 키: date 생략 가능 (전체 예약 조회 모드 지원)
 export const receptionQueryKeys = {
-  reservations: (date: string) => ["reception", "reservations", date] as const,
+  reservations: (date?: string) => ["reception", "reservations", date ?? "__all__"] as const,
   visits: (statuses?: string[]) => ["reception", "visits", statuses ?? []] as const,
 };
 
@@ -31,9 +32,9 @@ type UseReservationsQueryArgs = {
 };
 
 export function useReservationsQuery(args: UseReservationsQueryArgs = {}) {
-  // [MODIFIED] new Date().toISOString().slice(0,10) (UTC) → getTodayKST() (KST)
-  // 이유: 한국 자정~오전 9시에 UTC 기준 날짜는 전날 → 오늘 예약 0건 (버그 #3)
-  const date = args.date ?? getTodayKST();
+  // [MODIFIED v3.3] date 기본값 제거 — 전달 시에만 필터, 없으면 전체 예약 조회
+  // 이전 버그: 항상 오늘 기준 → 미래 일자(4/23 발표일) 예약이 목록에 안 뜸
+  const date = args.date;
   return useQuery<SyncedReservationRow[]>({
     queryKey: receptionQueryKeys.reservations(date),
     queryFn: () => fetchReservationsServer({ date }),

@@ -28,16 +28,19 @@ export type SyncedVisitRow = {
   patientName: string;
   gender: 'M' | 'F' | '';
   rrnMasked: string;
+  // [ADDED v3.3] patient JOIN 결과 — 수정 폼 populate용
+  patientPhone: string;
   status: VisitStatus;
   registeredAt: string;
   visitType: 'WALK_IN' | 'RESERVATION';
 };
 
 export async function fetchReservationsServer(args: { session?: HeadersInput; date?: string }): Promise<SyncedReservationRow[]> {
-  // [MODIFIED] new Date().toISOString() (UTC) → getTodayKST() (KST)
-  // 이유: 한국 자정~오전 9시에 UTC는 전날 날짜 → 오늘 예약 0건 반환 (버그 #3)
-  const date = args.date || getTodayKST();
-  const payload = await fetchJsonWithAuth<any>(`${ADMIN_BASE}/admin/reservations?date=${encodeURIComponent(date)}`, { method: 'GET' });
+  // [MODIFIED v3.3] date 파라미터 선택적 — 미래 예약도 함께 조회
+  // 이전 버그: 오늘(getTodayKST())만 필터 → 4/23(발표일) 예약이 화면에 안 뜸
+  // 수정: date 명시 시에만 필터, 없으면 백엔드가 required=false로 전체 예약 반환
+  const qs = args.date ? `?date=${encodeURIComponent(args.date)}` : '';
+  const payload = await fetchJsonWithAuth<any>(`${ADMIN_BASE}/admin/reservations${qs}`, { method: 'GET' });
   return asArray(payload).map((x: any): SyncedReservationRow => {
     const rawStatus = String(x.status || x.reservationStatus || 'BOOKED').toUpperCase();
     const status: SyncedReservationRow['status'] =
@@ -74,6 +77,7 @@ export async function fetchVisitsServer(args: { session?: HeadersInput; statuses
       patientName: String(x.patientName ?? x.name ?? x.reservationName ?? '-'),
       gender,
       rrnMasked: String(x.rrnMasked ?? x.maskedRrn ?? '******-*******'),
+      patientPhone: String(x.patientPhone ?? x.phone ?? ''),
       status: fromBackendVisitStatus(backendStatus),
       registeredAt,
       visitType: rawType.includes('RESERV') ? 'RESERVATION' : 'WALK_IN',
