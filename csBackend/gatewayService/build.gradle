@@ -26,6 +26,15 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
+    // [FIXED 2026-04-16] WebFlux starter 명시
+    // 원인: spring-boot-starter-security 단독 사용 시 서블릿 기반
+    //       SecurityAutoConfiguration이 먼저 잡혀 @EnableWebFluxSecurity가
+    //       무효화됨 -> Form 로그인 기본값 활성화 -> CORS 헤더 없는 401 응답 ->
+    //       브라우저가 CORS 오류로 오인
+    // 해결: WebFlux starter 명시 -> ReactiveSecurityAutoConfiguration 우선 ->
+    //       SecurityConfig의 SecurityWebFilterChain Bean 정상 등록
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+
     implementation 'io.jsonwebtoken:jjwt-api:0.12.5'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.5'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.5'
