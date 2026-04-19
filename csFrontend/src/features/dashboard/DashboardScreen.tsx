@@ -116,10 +116,10 @@ function DashboardContent() {
   // [FIXED P1] 예약현황 — 서버 데이터 우선, 로컬 fallback
   // 이전: localReservationRows(시드 데이터) 하드코딩 → 서버 예약과 불일치
   // 수정: isServerSession 시 admin/reservations API 데이터 사용
+  // [FIXED v3.1] length > 0 조건 제거 — 서버 0건도 서버 데이터로 취급 (로컬 유령 차단)
   const reservationsQuery = useReservationsQuery({ enabled: isServerSession });
   const isServerReservation = isServerSession
-    && Array.isArray(reservationsQuery.data)
-    && reservationsQuery.data.length > 0;
+    && Array.isArray(reservationsQuery.data);
   const reservationRows = isServerReservation
     ? reservationsQuery.data!
         .filter((r) => r.status === "RESERVED")

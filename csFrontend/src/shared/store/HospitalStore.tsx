@@ -76,50 +76,19 @@ function createSeedState(): HospitalState {
   return {
     session: null,
     emergencyCount: 3,
-    // [MODIFIED v2] 서버 V3 시드(admin_visit/admin_appointment)와 정합 맞춤
-    // patients 기준: 2001=박서준, 2002=이지은, 2003=김민수, 2004=박민재, 2005=최수진, 2006=정수현, 2007=한가인
-    // visits: 서버 patient_id 기준으로 교정 (11001~11006)
-    // reservations: 서버 appointment_id(21001~21003)와 일치
+    // [MODIFIED v3] 서버 시드 축소(reservation/visit INSERT 제거)에 맞춰 로컬도 빈 상태.
+    // patients: 서버 seed_demo_reset.sql v3.1과 동일한 5명 (성/이름 모두 distinct)
+    // reservations/visits/soaps: 빈 상태 — 시연 중 라이브로만 생성, 유령 데이터 차단
     patients: [
-      { id: 2001, name: "박서준", gender: "M", rrnFront: "982223", rrnBack: "1234567", phone: "010-8762-1111" },
-      { id: 2002, name: "이지은", gender: "F", rrnFront: "990101", rrnBack: "2345678", phone: "010-3456-2222" },
-      { id: 2003, name: "김민수", gender: "M", rrnFront: "010321", rrnBack: "3456789", phone: "010-8888-3333" },
-      { id: 2004, name: "박민재", gender: "M", rrnFront: "030412", rrnBack: "4123456", phone: "010-2222-4444" },
-      { id: 2005, name: "최수진", gender: "F", rrnFront: "950722", rrnBack: "2456123", phone: "010-3333-5555" },
-      { id: 2006, name: "정수현", gender: "M", rrnFront: "900101", rrnBack: "1987654", phone: "010-4444-6666" },
-      { id: 2007, name: "한가인", gender: "F", rrnFront: "920318", rrnBack: "2123456", phone: "010-1234-7777" },
+      { id: 2001, name: "박서준", gender: "M", rrnFront: "950315", rrnBack: "1111111", phone: "010-1234-5678" },
+      { id: 2002, name: "이하늘", gender: "F", rrnFront: "880722", rrnBack: "2222222", phone: "010-2345-6789" },
+      { id: 2003, name: "김도윤", gender: "M", rrnFront: "010910", rrnBack: "3333333", phone: "010-3456-7890" },
+      { id: 2004, name: "정유나", gender: "F", rrnFront: "970205", rrnBack: "2444444", phone: "010-4567-8901" },
+      { id: 2005, name: "최예은", gender: "F", rrnFront: "920830", rrnBack: "2555555", phone: "010-5678-9012" },
     ],
-    reservations: [
-      // 서버 admin_appointment 시드(21001~21003)와 id 일치 — checkInReservationServer 정합
-      { id: 21001, patientId: 2001, reservedAt: at(10, 0),  status: "RESERVED", memo: "초진 예약",  contactName: "박서준", contactPhone: "010-8762-1111" },
-      { id: 21002, patientId: 2002, reservedAt: at(14, 0),  status: "RESERVED", memo: "재진 예약",  contactName: "이지은", contactPhone: "010-3456-2222" },
-      { id: 21003, patientId: 2003, reservedAt: at(16, 0),  status: "RESERVED", memo: "복약 상담",  contactName: "김민수", contactPhone: "010-8888-3333" },
-    ],
-    visits: [
-      // 서버 admin_visit V3 시드와 patient_id 정합 맞춤
-      // 11001: patient_id=2001(박서준) WAITING
-      // 11002: patient_id=2001(박서준) IN_TREATMENT — 서버 V3 patient_id=2001 기준
-      // 11003: patient_id=2002(이지은) WAITING     — 서버 V3 patient_id=2002 기준
-      // 11004: patient_id=2003(김민수) COMPLETED   — 서버 V3 patient_id=2003 기준
-      // 11005: patient_id=2002(이지은) WAITING EMERGENCY — 서버 V3 patient_id=2002 기준
-      // 11006: patient_id=2002(이지은) WAITING     — 서버 V3 patient_id=2002 기준
-      { id: 11001, patientId: 2001, status: "WAITING",       registeredAt: at(9, 12), queueNo: "A-001", visitType: "WALK_IN" },
-      { id: 11002, patientId: 2001, status: "IN_TREATMENT",  registeredAt: at(9, 18), queueNo: "A-002", visitType: "WALK_IN" },
-      { id: 11003, patientId: 2002, status: "WAITING",       registeredAt: at(9, 24), queueNo: "A-003", visitType: "WALK_IN" },
-      { id: 11004, patientId: 2003, status: "COMPLETED",     registeredAt: at(8, 50), queueNo: "A-004", visitType: "RESERVATION" },
-      { id: 11005, patientId: 2002, status: "WAITING",       registeredAt: at(0, 0),  queueNo: "A-005", visitType: "WALK_IN" },  // EMERGENCY 접수 (arrival_type은 서버 필드)
-      { id: 11006, patientId: 2002, status: "WAITING",       registeredAt: at(9, 30), queueNo: "A-006", visitType: "WALK_IN" },
-    ],
-    soaps: {
-      11002: {
-        visitId: 11002,
-        subjective: "복통 호소",
-        objective: "복부 압통 경미",
-        assessment: "급성 위염 의심",
-        plan: "검사 후 약 처방 검토",
-        updatedAt: at(10, 20),
-      },
-    },
+    reservations: [],
+    visits: [],
+    soaps: {},
     examOrders: {},
     finalOrders: {},
     invoices: [],
