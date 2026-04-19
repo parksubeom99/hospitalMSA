@@ -14,5 +14,6 @@ public record ReservationResponse(
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         LocalDateTime canceledAt,
-        String cancelReason
+        String cancelReason,
+        String phone
 ) {}

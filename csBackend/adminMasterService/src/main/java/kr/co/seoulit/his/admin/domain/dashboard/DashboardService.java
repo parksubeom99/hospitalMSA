@@ -4,6 +4,7 @@ import kr.co.seoulit.his.admin.domain.config.AdminConfigService;
 import kr.co.seoulit.his.admin.domain.dashboard.dto.DashboardSummaryResponse;
 import kr.co.seoulit.his.admin.domain.frontoffice.appointment.Appointment;
 import kr.co.seoulit.his.admin.domain.frontoffice.appointment.AppointmentRepository;
+import kr.co.seoulit.his.admin.domain.frontoffice.reservation.ReservationRepository;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.Visit;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.VisitRepository;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,9 @@ public class DashboardService {
 
     private final VisitRepository visits;
     private final AppointmentRepository appts;
+    // [ADDED v3.4] 예약 집계는 admin_appointment가 아닌 admin_reservation에서 조회
+    // 이전 버그: 대시보드가 appointment 집계만 반환 → reservation 등록해도 원그래프 예약 색 0
+    private final ReservationRepository reservations;
     private final AdminConfigService adminConfigService;
 
     @Transactional(readOnly = true)
@@ -54,8 +58,10 @@ public class DashboardService {
         //         visit 데이터 집계 아님 — 설계 원칙: 응급 병상 수는 운영자 직접 조정
         int emergency = adminConfigService.getEmergencyCount();
 
-        List<Appointment> todayAppts = appts.findByStatusAndScheduledAtBetween("BOOKED", from, to);
-        int reservation = todayAppts.size();
+        // [FIXED v3.4] admin_reservation 기준 BOOKED 전체 카운트 (미래 예약 포함)
+        // 이유: 사용자가 실제 예약하는 테이블은 admin_reservation. admin_appointment는 별도 도메인.
+        //      시연 시 "예약 등록 → 대시보드 원그래프에 예약 색상 표시"를 위해 전체 활성 예약 집계.
+        int reservation = reservations.findByStatus("BOOKED").size();
 
         // 환자 보드: CLOSED/CANCELED 제외, 최신 12명
         List<DashboardSummaryResponse.PatientBoardRow> board = allVisits.stream()

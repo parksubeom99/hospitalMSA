@@ -7,13 +7,15 @@ import kr.co.seoulit.his.admin.domain.frontoffice.reservation.dto.ReservationCre
 import kr.co.seoulit.his.admin.domain.frontoffice.reservation.dto.ReservationResponse;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.VisitService;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitCreateRequest;
+import kr.co.seoulit.his.admin.domain.master.patient.Patient;
+import kr.co.seoulit.his.admin.domain.master.patient.PatientRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.HashMap; // [ADDED] Map.of() null value NullPointerException 방지
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -22,6 +24,7 @@ import java.util.Map;
 public class ReservationService {
 
     private final ReservationRepository reservations;
+    private final PatientRepository patients;
     private final VisitService visits;
     private final AuditClient audit;
 
@@ -99,14 +102,12 @@ public class ReservationService {
             throw new BusinessException(ErrorCode.INVALID_STATE, "Only BOOKED reservation can be checked in. status=" + r.getStatus());
         }
 
-        // [MODIFIED] arrivalType = "RESERVATION" 명시
-        // 이유: null 전달 시 Visit.arrivalType=NULL → 접수 목록에서 WALK_IN으로 오표시됨 (버그 #6)
         var visit = visits.create(new VisitCreateRequest(
                 r.getPatientId(),
                 r.getPatientName(),
                 r.getDepartmentCode(),
                 r.getDoctorId(),
-                "RESERVATION", // [MODIFIED] null → "RESERVATION"
+                "RESERVATION",
                 null
         ));
 
@@ -115,8 +116,6 @@ public class ReservationService {
         r.setUpdatedAt(LocalDateTime.now());
         Reservation saved = reservations.save(r);
 
-        // [MODIFIED] Map.of("visitId", null) → NullPointerException (Java 9+ Map.of는 null value 불허)
-        // 수정: HashMap 사용 + visitId를 String으로 변환
         Map<String, Object> detail = new HashMap<>();
         detail.put("visitId", visit.visitId() != null ? String.valueOf(visit.visitId()) : "");
         audit.write("RESERVATION_CHECKED_IN", "RESERVATION", String.valueOf(saved.getReservationId()), null, detail);
@@ -125,6 +124,13 @@ public class ReservationService {
     }
 
     private ReservationResponse toResponse(Reservation r) {
+        // Patient JOIN — phone 조회
+        String phone = null;
+        if (r.getPatientId() != null) {
+            phone = patients.findById(r.getPatientId())
+                    .map(Patient::getPhone)
+                    .orElse(null);
+        }
         return new ReservationResponse(
                 r.getReservationId(),
                 r.getPatientId(),
@@ -137,7 +143,8 @@ public class ReservationService {
                 r.getCreatedAt(),
                 r.getUpdatedAt(),
                 r.getCanceledAt(),
-                r.getCancelReason()
+                r.getCancelReason(),
+                phone
         );
     }
 
