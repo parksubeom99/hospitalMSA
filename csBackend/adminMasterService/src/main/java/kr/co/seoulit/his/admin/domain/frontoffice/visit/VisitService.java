@@ -9,6 +9,8 @@ import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitCreateRequest;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitResponse;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitStatusUpdateRequest;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitUpdateRequest;
+import kr.co.seoulit.his.admin.domain.master.patient.Patient;
+import kr.co.seoulit.his.admin.domain.master.patient.PatientRepository;
 import kr.co.seoulit.his.admin.messaging.outbox.OutboxService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,6 +33,8 @@ public class VisitService {
     private final AuditClient audit;
     // [ADDED] Phase 2-C: VISIT_REGISTERED Outbox 발행
     private final OutboxService outbox;
+    // [ADDED v3.3] patient JOIN — VisitResponse에 gender/rrnMasked/phone 포함
+    private final PatientRepository patients;
 
     @Value("${kafka.topic.his-visit-registered:his.adminmaster.visit.registered}")
     private String topicVisitRegistered;
@@ -203,10 +207,19 @@ public class VisitService {
     }
 
     private VisitResponse toResponse(Visit v) {
+        // [ADDED v3.3] patient JOIN — visit 응답에 성별/주민번호(마스킹)/전화번호 포함
+        // 용도: 대기 목록 성별 컬럼 + 수정 폼 populate
+        Patient p = v.getPatientId() != null ? patients.findById(v.getPatientId()).orElse(null) : null;
+        String gender = p != null ? p.getGender() : null;
+        String rrnMasked = p != null ? p.getRrnMasked() : null;
+        String patientPhone = p != null ? p.getPhone() : null;
         return new VisitResponse(
                 v.getVisitId(),
                 v.getPatientId(),
                 v.getPatientName(),
+                gender,
+                rrnMasked,
+                patientPhone,
                 v.getDepartmentCode(),
                 v.getDoctorId(),
                 v.getStatus(),
