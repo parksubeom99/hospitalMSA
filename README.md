@@ -302,6 +302,56 @@ hospitalMSA/
 - **구현:** micrometer-tracing-bridge-otel + opentelemetry-exporter-otlp (HTTP 4318 엔드포인트)
 - **확인:** Admin/Clinical 서비스 Waterfall Trace 5 Spans (Security FilterChain 포함) 검증 완료
 
+→ 실제 Waterfall 화면: [📊 분산 추적 실증 자료](#-분산-추적-실증-자료-grafana--tempo)
+
+---
+
+## 📊 분산 추적 실증 자료 (Grafana + Tempo)
+
+Phase 2-E에서 도입한 분산 추적이 실제 작동하는 증거. 각 Trace는 Spring Boot `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp`가 자동 수집하여 Tempo에 저장된 결과를 Grafana Explore에서 시각화한 것.
+
+### 1) Admin Service — HTTP Waterfall (정상 요청 · 18.87ms)
+
+![Admin HTTP Trace](docs/image/observability/admin-http-trace.png)
+
+`http get /admin/dashboard/summary` — 5 spans 구성:
+- **security filterchain before: 3.18ms**
+- authorize request (JWT 검증): 416.41μs
+- **secured request (컨트롤러 + DB): 13.27ms ← 전체의 70%**
+- security filterchain after: 1.02ms
+
+---
+
+### 2) Clinical Service — HTTP Waterfall (콜드 스타트 병목 · 399.5ms)
+
+![Clinical HTTP Trace](docs/image/observability/clinical-http-trace.png)
+
+`http get /clinical/visit-status` — 첫 요청 시 **Security filter chain 초기화 오버헤드가 202ms** 발생. 두 번째 요청부터는 Admin 수준(수 ms)으로 안정화.
+
+→ 분산 추적 도입 효과: **이 콜드 스타트 병목을 span 단위로 분해·식별 가능**. Admin의 18ms와 Clinical 첫 요청 400ms 차이의 원인이 "비즈니스 로직이 아닌 Security 초기화"라는 사실을 데이터로 증명.
+
+---
+
+### 3) Admin Kafka Outbox Trace (비동기 이벤트 발행 · 1.95ms)
+
+![Admin Kafka Trace](docs/image/observability/admin-kafka-trace.png)
+
+---
+
+### 4) Clinical Kafka Outbox Trace (2.95ms)
+
+![Clinical Kafka Trace](docs/image/observability/clinical-kafka-trace.png)
+
+`task integration-outbox-kafka-publisher.publish-ne` — **Outbox Pattern**으로 DB 트랜잭션과 Kafka 발행을 원자적으로 분리한 후 Publisher가 2초 간격 폴링으로 발행. 각 발행마다 독립 Trace 생성 → 비동기 이벤트 유실·중복 추적 가능.
+
+---
+
+### 5) Trace 리스트 — 집계 이력 (SLO 관리 근거)
+
+![Trace List](docs/image/observability/trace-list.png)
+
+Last 1 hour 기준 서비스별 호출 이력. Duration 컬럼으로 Outlier(이상치) 탐지 + `p99 latency` 같은 SLO 관리 근거 확보.
+
 ---
 
 ## 📈 Phase 현황
