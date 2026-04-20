@@ -60,14 +60,16 @@ class VisitRegisteredConsumerTest {
                 .clinicalStatus("WAITING")
                 .updatedAt(java.time.LocalDateTime.now())
                 .build();
-        given(visitStatusSvc.initOrGet(11001L)).willReturn(mockStatus);
+        // [MODIFIED v3.3] initOrGet 오버로드 2인자 시그니처로 변경
+        // Consumer가 Kafka 이벤트의 patientName을 함께 전달하도록 확장됨
+        given(visitStatusSvc.initOrGet(11001L, "홍길동")).willReturn(mockStatus);
         given(processedRepo.save(any())).willReturn(null);
 
         // when
         consumer.onVisitRegistered(message);
 
-        // then — visit_clinical_status 초기화 1회 호출 확인
-        verify(visitStatusSvc, times(1)).initOrGet(11001L);
+        // then — visit_clinical_status 초기화 1회 호출 확인 (visitId + patientName)
+        verify(visitStatusSvc, times(1)).initOrGet(11001L, "홍길동");
         verify(processedRepo, times(1)).save(argThat(e -> "evt-001".equals(e.getEventId())));
     }
 
@@ -96,8 +98,8 @@ class VisitRegisteredConsumerTest {
         // when
         consumer.onVisitRegistered(message);
 
-        // then — 중복이므로 initOrGet 호출 안 됨
-        verify(visitStatusSvc, never()).initOrGet(anyLong());
+        // then — 중복이므로 initOrGet 호출 안 됨 (2인자 시그니처 기준)
+        verify(visitStatusSvc, never()).initOrGet(anyLong(), anyString());
         verify(processedRepo, never()).save(any());
     }
 
@@ -127,7 +129,7 @@ class VisitRegisteredConsumerTest {
         // when
         consumer.onVisitRegistered(message);
 
-        // then — visitId 유효하지 않으므로 initOrGet 호출 안 됨
-        verify(visitStatusSvc, never()).initOrGet(anyLong());
+        // then — visitId 유효하지 않으므로 initOrGet 호출 안 됨 (2인자 시그니처 기준)
+        verify(visitStatusSvc, never()).initOrGet(anyLong(), anyString());
     }
 }

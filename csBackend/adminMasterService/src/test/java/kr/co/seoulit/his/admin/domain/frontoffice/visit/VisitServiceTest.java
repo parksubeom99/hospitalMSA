@@ -5,6 +5,7 @@ import kr.co.seoulit.his.admin.domain.frontoffice.billing.invoice.InvoiceReposit
 import kr.co.seoulit.his.admin.domain.frontoffice.queue.QueueService;
 import kr.co.seoulit.his.admin.domain.frontoffice.queue.QueueTicket;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitCreateRequest;
+import kr.co.seoulit.his.admin.domain.master.patient.PatientRepository;
 import kr.co.seoulit.his.admin.global.exception.BusinessException;
 import kr.co.seoulit.his.admin.messaging.outbox.OutboxService;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +35,10 @@ class VisitServiceTest {
     @Mock QueueService queueService;
     @Mock AuditClient auditClient;
     @Mock OutboxService outboxService;
+    // [ADDED v3.3] VisitService.toResponse()가 PatientRepository.findById로 gender/rrnMasked/phone 조회
+    // → 테스트에서 Mock 없으면 NullPointerException 발생하여 모든 케이스 실패
+    // findById 기본 반환값(Optional.empty())으로도 null 체크 가드가 있어 정상 동작
+    @Mock PatientRepository patientRepository;
 
     @InjectMocks
     VisitService visitService;
