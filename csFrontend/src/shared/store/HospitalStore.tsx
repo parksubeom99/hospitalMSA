@@ -64,47 +64,31 @@ const MOCK_ACCOUNTS = [
 ];
 
 function createSeedState(): HospitalState {
-  const baseDate = new Date();
-  baseDate.setHours(9, 0, 0, 0);
+  // [MODIFIED] new Date() → 고정 날짜 문자열
+  // 이유: SSR(서버) 실행 시각 ≠ CSR(클라이언트) hydration 시각 → React #425/#418/#423 hydration mismatch
+  // 해결: seed 데이터는 고정 ISO 문자열 사용, 런타임 now()는 액션 시점에만 호출
+  const SEED_DATE = "2026-01-15";
   const at = (h: number, m: number) => {
-    const d = new Date(baseDate);
-    d.setHours(h, m, 0, 0);
-    return d.toISOString();
+    const hh = String(h).padStart(2, "0");
+    const mm = String(m).padStart(2, "0");
+    return `${SEED_DATE}T${hh}:${mm}:00.000Z`;
   };
   return {
     session: null,
     emergencyCount: 3,
+    // [MODIFIED v3] 서버 시드 축소(reservation/visit INSERT 제거)에 맞춰 로컬도 빈 상태.
+    // patients: 서버 seed_demo_reset.sql v3.1과 동일한 5명 (성/이름 모두 distinct)
+    // reservations/visits/soaps: 빈 상태 — 시연 중 라이브로만 생성, 유령 데이터 차단
     patients: [
-      { id: 2001, name: "박서준", gender: "M", rrnFront: "982223", rrnBack: "1234567", phone: "010-8762-1111" },
-      { id: 2002, name: "이지은", gender: "F", rrnFront: "990101", rrnBack: "2345678", phone: "010-3456-2222" },
-      { id: 2003, name: "김민수", gender: "M", rrnFront: "010321", rrnBack: "3456789", phone: "010-8888-3333" },
-      { id: 2004, name: "박민재", gender: "M", rrnFront: "030412", rrnBack: "4123456", phone: "010-2222-4444" },
-      { id: 2005, name: "최수진", gender: "F", rrnFront: "950722", rrnBack: "2456123", phone: "010-3333-5555" },
-      { id: 2006, name: "정수현", gender: "M", rrnFront: "900101", rrnBack: "1987654", phone: "010-4444-6666" },
-      { id: 2007, name: "한가인", gender: "F", rrnFront: "920318", rrnBack: "2123456", phone: "010-1234-7777" },
-      { id: 2008, name: "유재석", gender: "M", rrnFront: "760814", rrnBack: "1234567", phone: "010-5555-8888" },
+      { id: 2001, name: "박서준", gender: "M", rrnFront: "950315", rrnBack: "1111111", phone: "010-1234-5678" },
+      { id: 2002, name: "이하늘", gender: "F", rrnFront: "880722", rrnBack: "2222222", phone: "010-2345-6789" },
+      { id: 2003, name: "김도윤", gender: "M", rrnFront: "010910", rrnBack: "3333333", phone: "010-3456-7890" },
+      { id: 2004, name: "정유나", gender: "F", rrnFront: "970205", rrnBack: "2444444", phone: "010-4567-8901" },
+      { id: 2005, name: "최예은", gender: "F", rrnFront: "920830", rrnBack: "2555555", phone: "010-5678-9012" },
     ],
-    reservations: [
-      { id: 501, patientId: 2001, reservedAt: at(14, 30), status: "RESERVED", memo: "초진 예약", contactName: "박서준", contactPhone: "010-8762-1111" },
-      { id: 502, patientId: 2002, reservedAt: at(15, 0), status: "RESERVED", memo: "재진 예약", contactName: "이지은", contactPhone: "010-3456-2222" },
-      { id: 503, patientId: 2005, reservedAt: at(16, 20), status: "RESERVED", memo: "복약 상담", contactName: "최수진", contactPhone: "010-3333-5555" },
-    ],
-    visits: [
-      { id: 11001, patientId: 2003, status: "WAITING", registeredAt: at(9, 12), queueNo: "A-001", visitType: "WALK_IN" },
-      { id: 11002, patientId: 2004, status: "IN_TREATMENT", registeredAt: at(9, 18), queueNo: "A-002", visitType: "WALK_IN" },
-      { id: 11003, patientId: 2006, status: "WAITING", registeredAt: at(9, 24), queueNo: "A-003", visitType: "WALK_IN" },
-      { id: 11004, patientId: 2007, status: "COMPLETED", registeredAt: at(8, 50), queueNo: "A-004", visitType: "RESERVATION" },
-    ],
-    soaps: {
-      11002: {
-        visitId: 11002,
-        subjective: "복통 호소",
-        objective: "복부 압통 경미",
-        assessment: "급성 위염 의심",
-        plan: "검사 후 약 처방 검토",
-        updatedAt: at(10, 20),
-      },
-    },
+    reservations: [],
+    visits: [],
+    soaps: {},
     examOrders: {},
     finalOrders: {},
     invoices: [],
@@ -125,6 +109,10 @@ interface ActionResult {
 }
 
 interface HospitalContextValue {
+  // [ADDED] hydrated: localStorage 복원 + 토큰 유효성 검증 완료 여부
+  // SSR(false) → client useEffect 완료(true)
+  // RoleGate가 이 값을 보고 hydration 전 렌더를 억제 → #418/#423/#425 해소
+  hydrated: boolean;
   state: HospitalState;
   capacity: CapacitySummary;
   medicationCatalog: MedicationCatalogItem[];
@@ -175,13 +163,26 @@ function buildCapacity(state: HospitalState): CapacitySummary {
 
 export function HospitalProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<HospitalState>(createSeedState);
+  // [MODIFIED] hydrated 의미 확장:
+  // 이전: localStorage 복원 완료
+  // 변경: localStorage 복원 + 서버 세션 토큰 유효성 검증 완료
+  // 이유: 복원 즉시 hydrated=true → isServerSession=true → 만료 토큰으로 API 401 루프 발생
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as HospitalState;
-      if (parsed && parsed.patients && parsed.visits) {
+    // [MODIFIED] 비동기 토큰 검증 포함 초기화 흐름
+    // 1. localStorage 복원
+    // 2. authSource="server" 세션이 있으면 /auth/me 호출로 토큰 유효성 검증
+    //    → 유효: 세션 유지
+    //    → 만료/실패: session=null + clearStoredAuthTokens() (401 루프 차단)
+    // 3. 완료 후 hydrated=true (성공/실패 무관)
+    const init = async () => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as HospitalState;
+        if (!parsed?.patients || !parsed?.visits) return;
+
         const normalizedSessionRole = normalizeRoleCode((parsed as any)?.session?.role);
         const normalized = {
           ...parsed,
@@ -197,11 +198,58 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
             roleCode: (normalizeRoleCode((a as any).roleCode) ?? "SYS") as RoleCode,
           })),
         } as HospitalState;
+
+        // [ADDED] 실서버 세션 토큰 유효성 검증
+        // authSource="server" 복원 시 /auth/me 호출 → 실패면 즉시 세션 초기화
+        // 이유: 만료된 토큰을 그대로 복원하면 페이지 진입 즉시 401 루프 발생
+        if (normalized.session?.authSource === "server") {
+          const tokens = loadStoredAuthTokens();
+          if (tokens?.accessToken) {
+            try {
+              // [ADDED] 5초 타임아웃 — IAM 서버 다운 시 앱 전체 빈 화면 방지
+              const timeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("meAuth timeout")), 5000)
+              );
+              const me = await Promise.race([meAuth(), timeout]);
+              // 토큰 유효 → 세션 최신 정보로 갱신 후 유지
+              setState({
+                ...normalized,
+                session: {
+                  ...normalized.session,
+                  role: me.role,
+                  displayName: me.displayName,
+                  username: me.username,
+                  accessToken: tokens.accessToken,
+                  tokenType: "Bearer",
+                  authSource: "server",
+                  doctorStaffId: me.staffId,
+                },
+              });
+              return; // finally에서 hydrated=true 처리
+            } catch {
+              // [ADDED] 토큰 만료/검증 실패 → 세션 초기화 (401 루프 차단)
+              clearStoredAuthTokens();
+              setState({ ...normalized, session: null });
+              return;
+            }
+          } else {
+            // 토큰 자체 없음 → 세션 초기화
+            setState({ ...normalized, session: null });
+            return;
+          }
+        }
+
+        // demo 세션 또는 session=null → 그대로 복원
         setState(normalized);
+      } catch {
+        // localStorage 파싱 오류 → 기본 seed 상태 유지
+      } finally {
+        // [UNCHANGED] 성공/실패 무관하게 항상 hydrated=true
+        setHydrated(true);
       }
-    } catch {
-      // ignore malformed local state
-    }
+    };
+
+    void init();
   }, []);
 
   useEffect(() => {
@@ -246,6 +294,7 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
   };
 
   const value: HospitalContextValue = {
+    hydrated, // [MODIFIED] localStorage 복원 + 토큰 검증 완료 후 true
     state,
     capacity,
     medicationCatalog: MEDICATION_CATALOG,

@@ -931,3 +931,22 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     grid-template-columns: 1fr auto minmax(120px, 1fr);
   }
 }
+
+/* [MODIFIED] "접수 선택" 레이블 텍스트 — 검은색 */
+.page-grid--readable .form-grid label > span {
+  color: #1a2a3a;
+  font-weight: 600;
+  font-size: .88rem;
+}
+/* [MODIFIED] 접수 선택 select 박스 — 내과수술/1번 수술실 select와 동일한 스타일 */
+.page-grid--readable .form-grid label select {
+  background: rgba(22, 48, 88, 0.80);
+  border: 1.5px solid rgba(120, 175, 240, 0.60);
+  color: #ddeeff;
+  font-weight: 500;
+}
+.page-grid--readable .form-grid label select:focus {
+  border-color: rgba(120, 175, 240, 0.95);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(80, 150, 255, 0.22);
+}

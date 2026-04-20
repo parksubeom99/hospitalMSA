@@ -5,9 +5,10 @@ import { GlassCard } from "@/shared/components/GlassCard";
 import { RoleGate } from "@/shared/components/RoleGate";
 import { computeAdmission, MEDICATION_CATALOG, useHospital } from "@/shared/store/HospitalStore";
 import type { FinalOrderInjectionItem, FinalOrderMedicationItem } from "@/shared/types/domain";
-import { calcNights, periodLabel } from "@/shared/lib/date";
+import { calcNights, periodLabel, todayDate, daysAfterToday } from "@/shared/lib/date";
 import { formatCurrency } from "@/shared/lib/format";
-import { getFinalOrdersByVisitServer, saveAndFinalizeFinalOrdersServer } from "@/shared/services/clinicalApi";
+import { saveAndFinalizeFinalOrdersServer } from "@/shared/services/clinicalApi";
+import { useFinalOrdersQuery } from "@/shared/services/orders/ordersQueries"; // [ADDED]
 
 type FinalOrderType = "MED" | "SURGERY" | "ADMISSION" | "INJECTION" | "NONE";
 
@@ -21,7 +22,7 @@ const INJECTION_CATALOG: FinalOrderInjectionItem[] = [
 export function OrdersScreen() {
   const { state, patientsById, saveFinalOrder } = useHospital();
 
-  // [FIX] SOAP 작성 + 검사오더 신청 완료한 환자만 최종오더 화면에 표시
+
   // 조건: soaps에 해당 visitId 키가 있고(SOAP 작성됨),
   //       examOrders에 해당 visitId가 있고 항목이 1개 이상(검사오더 완료)
   const activeVisits = useMemo(
@@ -42,13 +43,23 @@ export function OrdersScreen() {
   const [surgeryType, setSurgeryType] = useState<"INTERNAL" | "EXTERNAL">("INTERNAL");
   const [roomNo, setRoomNo] = useState<number>(1);
   const [wardNo, setWardNo] = useState<number>(1);
-  const [admitDate, setAdmitDate] = useState<string>("2026-03-11");
-  const [dischargeDate, setDischargeDate] = useState<string>("2026-03-14");
+  // [MODIFIED] 입원 날짜 기본값 → 오늘/오늘+3박 (고정값 "2026-03-11" 제거)
+  // 이유: 과거 날짜 입원 등록 방지 + 실제 운영 날짜 기반
+  const [admitDate, setAdmitDate] = useState<string>(todayDate());
+  const [dischargeDate, setDischargeDate] = useState<string>(daysAfterToday(3));
   const [message, setMessage] = useState("");
-  const [serverWriteEnabled, setServerWriteEnabled] = useState(false);
-  const [serverSyncEnabled, setServerSyncEnabled] = useState(false);
-  const [syncLoading, setSyncLoading] = useState(false);
-  const [serverFinalSummary, setServerFinalSummary] = useState<string>("미동기화");
+  // [MODIFIED] 체크박스 2개 → 동기화 버튼 1개로 단순화
+  // 실서버 저장/확정: 세션 accessToken 존재 시 자동 활성화
+  const serverWriteEnabled = state.session?.authSource === "server"; // [FIXED] accessToken → authSource 기준으로 통일
+
+  // [MODIFIED] useState(syncLoading/serverFinalSummary) → React Query로 대체
+  const finalOrdersQuery = useFinalOrdersQuery({ visitId }); // [ADDED]
+  const syncLoading = finalOrdersQuery.isFetching; // [MODIFIED]
+  const serverFinalSummary = finalOrdersQuery.data // [MODIFIED]
+    ? finalOrdersQuery.data.length === 0
+      ? "실서버 최종오더 없음"
+      : finalOrdersQuery.data.map((r: any) => `${r.type}:${r.status}`).join(", ")
+    : "미동기화";
 
   useEffect(() => {
     const fo = state.finalOrders[visitId];
@@ -59,8 +70,8 @@ export function OrdersScreen() {
     setSurgeryType(fo.surgery?.surgeryType ?? "INTERNAL");
     setRoomNo(fo.surgery?.roomNo ?? 1);
     setWardNo(fo.admission?.wardNo ?? 1);
-    setAdmitDate(fo.admission?.admitDate ?? "2026-03-11");
-    setDischargeDate(fo.admission?.dischargeDate ?? "2026-03-14");
+    setAdmitDate(fo.admission?.admitDate ?? todayDate());
+    setDischargeDate(fo.admission?.dischargeDate ?? daysAfterToday(3));
   }, [visitId, state.finalOrders]);
 
   const visit = activeVisits.find(v => v.id === visitId);
@@ -132,30 +143,20 @@ export function OrdersScreen() {
   };
 
 
+  // [MODIFIED] 직접 fetch → React Query refetch() 위임
   const syncFinalOrdersFromServer = async () => {
     if (!state.session?.accessToken) return emit("실서버 IAM 로그인 후 동기화 가능합니다.");
     if (!visitId) return emit("접수를 먼저 선택해주세요.");
     try {
-      setSyncLoading(true);
-      const rows = await getFinalOrdersByVisitServer({ session: state.session ?? undefined, visitId });
-      if (!rows.length) {
-        setServerFinalSummary('실서버 최종오더 없음');
-      } else {
-        setServerFinalSummary(rows.map((r: any) => `${r.type}:${r.status}`).join(', '));
-      }
+      const result = await finalOrdersQuery.refetch(); // [MODIFIED]
+      const rows = result.data ?? [];
       emit(`실서버 최종오더 동기화 완료 (${rows.length}건)`);
     } catch (e: any) {
       emit(`실서버 동기화 실패: ${e?.message || e}`);
-    } finally {
-      setSyncLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (!serverSyncEnabled || !visitId) return;
-    void syncFinalOrdersFromServer();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverSyncEnabled, visitId]);
+  // [REMOVED] serverSyncEnabled useEffect 제거 — 버튼 클릭으로만 동기화
 
   return (
     <RoleGate allowed={["DOC", "SYS"]}>
@@ -163,25 +164,22 @@ export function OrdersScreen() {
         <GlassCard title="오더 (최종처방)" subtitle="약 / 주사 / 수술 / 입원 / 이상소견없음(NONE)">
           <div className="form-grid tri">
             <div className="inline-check-group" style={{ gridColumn: "1 / -1" }}>
-              <label className={`pill-check ${serverWriteEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverWriteEnabled} onChange={(e) => setServerWriteEnabled(e.target.checked)} />
-                <span>실서버 저장/확정 모드</span>
-              </label>
-              <label className={`pill-check ${serverSyncEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverSyncEnabled} onChange={(e) => setServerSyncEnabled(e.target.checked)} />
-                <span>실서버 동기화 모드</span>
-              </label>
+              {/* [MODIFIED] 체크박스 2개 → 동기화 버튼 1개 */}
               <button type="button" onClick={() => void syncFinalOrdersFromServer()} disabled={syncLoading}>동기화 실행</button>
+              {serverWriteEnabled && <small className="muted">실서버 저장/확정 모드 활성</small>}
               <small className="muted">서버요약: {serverFinalSummary}</small>
             </div>
             <label>
               <span>접수 선택</span>
               <select value={visitId} onChange={(e) => setVisitId(Number(e.target.value))}>
-                {activeVisits.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.id} / {patientsById[v.patientId]?.name ?? "-"}
-                  </option>
-                ))}
+                {activeVisits.length === 0
+                  ? <option value={0}>진료 완료 환자 없음 (진료 화면에서 SOAP + 검사오더 저장 필요)</option>
+                  : activeVisits.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.id} / {patientsById[v.patientId]?.name ?? "-"}
+                    </option>
+                  ))
+                }
               </select>
             </label>
             <div className="info-pill">
@@ -281,11 +279,11 @@ export function OrdersScreen() {
                   </label>
                   <label>
                     <span>입원 시작일</span>
-                    <input type="date" value={admitDate} onChange={(e) => setAdmitDate(e.target.value)} disabled={!types.includes("ADMISSION") || types.includes("NONE")} />
+                    <input type="date" value={admitDate} min={todayDate()} onChange={(e) => setAdmitDate(e.target.value)} disabled={!types.includes("ADMISSION") || types.includes("NONE")} />
                   </label>
                   <label>
                     <span>퇴원일</span>
-                    <input type="date" value={dischargeDate} onChange={(e) => setDischargeDate(e.target.value)} disabled={!types.includes("ADMISSION") || types.includes("NONE")} />
+                    <input type="date" value={dischargeDate} min={admitDate} onChange={(e) => setDischargeDate(e.target.value)} disabled={!types.includes("ADMISSION") || types.includes("NONE")} />
                   </label>
                 </div>
                 <div className="info-panel">

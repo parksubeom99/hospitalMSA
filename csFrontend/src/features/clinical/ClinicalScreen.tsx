@@ -7,15 +7,43 @@ import { normalizeExamSelection, useHospital, EXAM_OPTIONS } from "@/shared/stor
 import type { ExamCategory, ExamOrderItem } from "@/shared/types/domain";
 import { formatRrnMasked } from "@/shared/lib/masking";
 import { STATUS_LABEL } from "@/shared/config/constants";
-import { getExamOrdersByVisitServer, getSoapServer, saveExamOrdersByVisitServer, saveSoapServer } from "@/shared/services/clinicalApi";
+import { saveExamOrdersByVisitServer, saveSoapServer } from "@/shared/services/clinicalApi";
+import { useExamOrdersQuery, useSoapQuery, useVisitClinicalStatusListQuery } from "@/shared/services/clinical/clinicalQueries"; // [MODIFIED]
 
 export function ClinicalScreen() {
   const { state, patientsById, saveSoap, saveExamOrders } = useHospital();
-  const activeVisits = useMemo(
-    () => state.visits.filter(v => v.status !== "COMPLETED").sort((a, b) => b.id - a.id),
-    [state.visits]
-  );
-  const [visitId, setVisitId] = useState<number>(activeVisits[0]?.id ?? 0);
+  // [MODIFIED] 서버 visit_clinical_status 우선, 로컬 fallback
+  const isServerSession = state.session?.authSource === "server";
+  const visitClinicalListQuery = useVisitClinicalStatusListQuery({ enabled: isServerSession });
+  const isServerVisitData = isServerSession
+    && Array.isArray(visitClinicalListQuery.data)
+    && visitClinicalListQuery.data.length > 0;
+
+  // 서버 데이터: visit_clinical_status 목록 (BILLED/BILLING_FAILED 제외됨)
+  // 로컬 fallback: HospitalStore.visits (COMPLETED 제외)
+  const activeVisits = useMemo(() => {
+    if (isServerVisitData) {
+      return visitClinicalListQuery.data!.map(s => ({
+        id: s.visitId,
+        status: s.clinicalStatus,
+        patientId: state.visits.find(v => v.id === s.visitId)?.patientId ?? 0,
+        patientName: s.patientName, // [FIXED B3] 서버 이름 보존
+      }));
+    }
+    return state.visits
+      .filter(v => v.status !== "COMPLETED")
+      .sort((a, b) => b.id - a.id)
+      .map(v => ({ id: v.id, status: v.status, patientId: v.patientId, patientName: undefined }));
+  }, [isServerVisitData, visitClinicalListQuery.data, state.visits]);
+
+  const [visitId, setVisitId] = useState<number>(0);
+
+  // [ADDED] 서버 데이터 로드 완료 시 첫 번째 항목 자동 선택
+  useEffect(() => {
+    if (activeVisits.length > 0 && visitId === 0) {
+      setVisitId(activeVisits[0].id);
+    }
+  }, [activeVisits]);
   const currentSoap = state.soaps[visitId];
   const [soap, setSoap] = useState({
     subjective: "",
@@ -25,9 +53,14 @@ export function ClinicalScreen() {
   });
   const [selectedItems, setSelectedItems] = useState<ExamOrderItem[]>([]);
   const [message, setMessage] = useState("");
-  const [serverWriteEnabled, setServerWriteEnabled] = useState(false);
-  const [serverSyncEnabled, setServerSyncEnabled] = useState(false);
-  const [syncLoading, setSyncLoading] = useState(false);
+  // [MODIFIED] 체크박스 2개(실서버 저장/동기화 모드) → 동기화 버튼 1개로 단순화
+  // 실서버 저장: 세션이 실서버 로그인(accessToken 존재)이면 자동으로 서버 저장 시도
+  // 실서버 동기화: "동기화 실행" 버튼 클릭 시에만 수행
+  const serverWriteEnabled = isServerSession; // [MODIFIED] isServerSession으로 통합
+  // [MODIFIED] useState(syncLoading/serverSyncedAt) → React Query로 대체
+  const soapQuery = useSoapQuery({ visitId }); // [ADDED]
+  const examOrdersQuery = useExamOrdersQuery({ visitId }); // [ADDED]
+  const syncLoading = soapQuery.isFetching || examOrdersQuery.isFetching; // [MODIFIED]
   const [serverSyncedAt, setServerSyncedAt] = useState<string | null>(null);
 
   useEffect(() => {
@@ -64,33 +97,33 @@ export function ClinicalScreen() {
   };
 
 
+  // [MODIFIED] 직접 fetch → React Query refetch() 위임
   const syncClinicalFromServer = async () => {
-    if (!state.session?.accessToken) return emit("실서버 IAM 로그인 후 동기화 가능합니다.");
+    if (!isServerSession) return emit("실서버 IAM 로그인 후 동기화 가능합니다.");
     if (!visitId) return emit("접수를 먼저 선택해주세요.");
     try {
-      setSyncLoading(true);
-      const [soapRes, examRes] = await Promise.all([
-        getSoapServer({ session: state.session ?? undefined, visitId }),
-        getExamOrdersByVisitServer({ session: state.session ?? undefined, visitId }),
+      const [soapResult, examResult] = await Promise.all([ // [MODIFIED]
+        soapQuery.refetch(),
+        examOrdersQuery.refetch(),
       ]);
-      setSoap({
-        subjective: soapRes.subjective ?? '', objective: soapRes.objective ?? '', assessment: soapRes.assessment ?? '', plan: soapRes.plan ?? '',
-      });
+      const soapRes = soapResult.data;
+      const examRes = examResult.data ?? [];
+      if (soapRes) {
+        setSoap({
+          subjective: soapRes.subjective ?? "", objective: soapRes.objective ?? "",
+          assessment: soapRes.assessment ?? "", plan: soapRes.plan ?? "",
+        });
+      }
       setSelectedItems(examRes);
-      setServerSyncedAt(new Date().toLocaleTimeString('ko-KR'));
+      setServerSyncedAt(new Date().toLocaleTimeString("ko-KR"));
       emit(`실서버 동기화 완료 (SOAP + 검사오더 ${examRes.length}건)`);
     } catch (e: any) {
       emit(`실서버 동기화 실패: ${e?.message || e}`);
-    } finally {
-      setSyncLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (!serverSyncEnabled || !visitId) return;
-    void syncClinicalFromServer();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverSyncEnabled, visitId]);
+  // [REMOVED] serverSyncEnabled useEffect 제거 — 체크박스 자동 동기화 불필요
+  // 동기화는 "동기화 실행" 버튼 클릭으로만 수행
 
   return (
     <RoleGate allowed={["DOC", "SYS"]}>
@@ -98,15 +131,10 @@ export function ClinicalScreen() {
         <GlassCard title="진료" subtitle="SOAP + 검사/영상(복수 선택) · 의사/시스템관리자 전용">
           <div className="form-grid tri">
             <div className="inline-check-group" style={{ gridColumn: "1 / -1" }}>
-              <label className={`pill-check ${serverWriteEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverWriteEnabled} onChange={(e) => setServerWriteEnabled(e.target.checked)} />
-                <span>실서버 저장 모드</span>
-              </label>
-              <label className={`pill-check ${serverSyncEnabled ? "is-on" : ""}`}>
-                <input type="checkbox" checked={serverSyncEnabled} onChange={(e) => setServerSyncEnabled(e.target.checked)} />
-                <span>실서버 동기화 모드</span>
-              </label>
+              {/* [MODIFIED] 체크박스 2개 → 동기화 버튼 1개 */}
+              {/* 실서버 저장: 세션 accessToken 존재 시 자동 활성화 */}
               <button type="button" onClick={() => void syncClinicalFromServer()} disabled={syncLoading}>동기화 실행</button>
+              {serverWriteEnabled && <small className="muted">실서버 저장 모드 활성</small>}
               {serverSyncedAt && <small className="muted">최근 동기화: {serverSyncedAt}</small>}
             </div>
             <label>
@@ -114,9 +142,11 @@ export function ClinicalScreen() {
               <select value={visitId} onChange={(e) => setVisitId(Number(e.target.value))}>
                 {activeVisits.map((v) => {
                   const p = patientsById[v.patientId];
+                  // [FIXED B3] 이름 우선순위: 로컬 patients → 서버 patientName → "환자"
+                  const displayName = p?.name ?? v.patientName ?? "환자";
                   return (
                     <option key={v.id} value={v.id}>
-                      {v.id} / {p ? p.name : "-"} / {v.status}
+                      {v.id} / {displayName} / {v.status}
                     </option>
                   );
                 })}

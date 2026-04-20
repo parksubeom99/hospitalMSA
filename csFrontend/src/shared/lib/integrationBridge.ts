@@ -36,6 +36,10 @@ export function fromBackendVisitStatus(status?: string | null): VisitStatus {
     case "CLOSED":
     case "COMPLETED":
       return "COMPLETED";
+    case "CANCELED":
+    case "CANCELLED":
+      // [FIXED] 취소 상태 → COMPLETED 매핑 (취소된 visit이 WAITING으로 오표시되는 버그 차단)
+      return "COMPLETED";
     default:
       return "WAITING";
   }

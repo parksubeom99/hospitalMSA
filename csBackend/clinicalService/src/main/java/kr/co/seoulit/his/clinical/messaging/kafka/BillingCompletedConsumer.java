@@ -14,8 +14,10 @@ import java.time.LocalDateTime;
 /**
  * Phase 2: AdminMaster → Clinical BILLING_COMPLETED / BILLING_FAILED 이벤트 수신
  *
- * 성공: VisitClinicalStatus → BILLED
- * 실패: 로그만 (재시도 정책은 Outbox retry에 위임)
+ * 성공(BILLING_COMPLETED): VisitClinicalStatus → BILLED
+ * 실패(BILLING_FAILED):    VisitClinicalStatus → BILLING_FAILED [MODIFIED]
+ *                          담당자 수동 재처리 대기 상태로 명시
+ *                          (자동 보상 트랜잭션 없음 — 실제 HIS 운영 패턴)
  */
 @Slf4j
 @Component
@@ -35,16 +37,20 @@ public class BillingCompletedConsumer {
         if (eventId == null || eventId.isBlank()) return;
         if (processedRepo.existsByEventId(eventId)) return;
 
+        // [ADDED] eventType 필터 — 다른 이벤트 타입 유입 시 무시 처리
         String eventType = root.path("eventType").asText();
         if (!"BILLING_COMPLETED".equalsIgnoreCase(eventType)) {
-            processedRepo.save(ProcessedEvent.builder().eventId(eventId).processedAt(LocalDateTime.now()).build());
+            log.debug("[BillingCompleted] 처리 대상 아님. eventType={}, eventId={}", eventType, eventId);
+            processedRepo.save(ProcessedEvent.builder()
+                    .eventId(eventId).processedAt(LocalDateTime.now()).build());
             return;
         }
 
         long visitId = root.path("payload").path("visitId").asLong();
         visitStatusSvc.markBilled(visitId);
 
-        processedRepo.save(ProcessedEvent.builder().eventId(eventId).processedAt(LocalDateTime.now()).build());
+        processedRepo.save(ProcessedEvent.builder()
+                .eventId(eventId).processedAt(LocalDateTime.now()).build());
         log.info("[Phase2] BILLING_COMPLETED 수신 → BILLED. visitId={}", visitId);
     }
 
@@ -57,11 +63,23 @@ public class BillingCompletedConsumer {
         if (eventId == null || eventId.isBlank()) return;
         if (processedRepo.existsByEventId(eventId)) return;
 
+        // [ADDED] eventType 필터
+        String eventType = root.path("eventType").asText();
+        if (!"BILLING_FAILED".equalsIgnoreCase(eventType)) {
+            log.debug("[BillingFailed] 처리 대상 아님. eventType={}, eventId={}", eventType, eventId);
+            processedRepo.save(ProcessedEvent.builder()
+                    .eventId(eventId).processedAt(LocalDateTime.now()).build());
+            return;
+        }
+
         long visitId = root.path("payload").path("visitId").asLong();
         String reason = root.path("payload").path("reason").asText("UNKNOWN");
 
-        processedRepo.save(ProcessedEvent.builder().eventId(eventId).processedAt(LocalDateTime.now()).build());
-        log.error("[Phase2] BILLING_FAILED 수신. visitId={}, reason={}", visitId, reason);
-        // 재시도는 Outbox retry 스케줄러에 위임 (별도 보상 트랜잭션 불필요)
+        // [MODIFIED] 로그만 남기던 것 → BILLING_FAILED 상태 명시 전환
+        visitStatusSvc.markBillingFailed(visitId); // [ADDED]
+
+        processedRepo.save(ProcessedEvent.builder()
+                .eventId(eventId).processedAt(LocalDateTime.now()).build());
+        log.error("[Phase2] BILLING_FAILED 수신 → BILLING_FAILED 상태 전환. visitId={}, reason={}", visitId, reason);
     }
 }

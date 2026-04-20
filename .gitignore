@@ -22,6 +22,7 @@ csBackend/**/out/
 csBackend/**/*.class
 csBackend/**/*.jar
 csBackend/**/*.war
+!csBackend/**/gradle/wrapper/gradle-wrapper.jar
 HELP.md
 
 # ── Next.js ─────────────────────────────────────────────────
@@ -48,3 +49,13 @@ desktop.ini
 # ── 로그 ─────────────────────────────────────────────────────
 *.log
 logs/
+
+# 프로젝트 루트 .gitignore 마지막에 추가
+TRUNC*
+
+# ── 보안: 토큰/시크릿 파일 ───────────────────────────────────
+# JWT 발급 토큰 등 민감 데이터는 커밋 금지
+token.txt
+*.token
+*.secret
+*.pem

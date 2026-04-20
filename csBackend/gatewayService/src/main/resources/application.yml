@@ -9,10 +9,18 @@ spring:
       default-filters:
         - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
       globalcors:
+        # [FIXED 2026-04-16] add-to-simple-url-handler-mapping 추가
+        # 원인: Gateway는 Spring WebFlux 기반이고 SimpleUrlHandlerMapping이 OPTIONS 요청을
+        #       먼저 처리하는데, 이 플래그 없이는 globalcors 설정이 그 매핑에 적용되지 않음
+        # 해결: true 설정 -> OPTIONS preflight가 CORS 필터를 정상 통과
+        add-to-simple-url-handler-mapping: true
         cors-configurations:
           "[/**]":
-            allowedOrigins:
-              - "${GATEWAY_ALLOWED_ORIGIN:http://localhost:3000}"
+            # [FIXED 2026-04-16] allowedOrigins -> allowedOriginPatterns 변경
+            # 원인: allowCredentials: true + allowedOrigins: 와일드카드 조합은 Spring에서 금지됨
+            # 해결: allowedOriginPatterns 사용 -> 와일드카드 허용 + Credentials 공존 가능
+            allowedOriginPatterns:
+              - "*"
             allowedMethods:
               - GET
               - POST
@@ -41,7 +49,6 @@ spring:
         - id: clinical-service
           uri: ${CLINICAL_SERVICE_URL:http://localhost:8183}
           predicates:
-            # Phase 2: /api/clinical/visit-status/** 추가
             - Path=/api/emr/**,/api/orders/**,/api/final-orders/**,/api/encounters/**,/api/results/**,/api/clinical/**
           filters:
             - RewritePath=/api/(?<segment>.*), /${segment}

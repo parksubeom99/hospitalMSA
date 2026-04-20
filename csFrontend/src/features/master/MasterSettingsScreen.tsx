@@ -5,7 +5,9 @@ import { GlassCard } from "@/shared/components/GlassCard";
 import { RoleGate } from "@/shared/components/RoleGate";
 import { useHospital } from "@/shared/store/HospitalStore";
 import type { StaffProfile } from "@/shared/types/domain";
-import { createMasterStaffServer, deactivateMasterStaffServer, listMasterStaffServer, updateMasterStaffServer } from "@/shared/services/masterStaffApi";
+import { createMasterStaffServer, deactivateMasterStaffServer, updateMasterStaffServer } from "@/shared/services/masterStaffApi";
+import { useMasterStaffQuery, masterQueryKeys } from "@/shared/services/master/masterQueries";
+import { useQueryClient } from "@tanstack/react-query";
 
 type EmailDomainOption = "naver.com" | "daum.net" | "google.com" | "custom";
 
@@ -67,10 +69,20 @@ function toStaffProfile(form: FormState): StaffProfile {
   };
 }
 
-export function MasterSettingsScreen() {
+// [ADDED] 실제 UI 로직 컴포넌트 — hydrated=true 이후에만 렌더됨
+// 이유: MasterSettingsScreen 최상단에서 state.session 참조 시
+//       SSR(null) vs CSR(복원값) 불일치 → #418/#423/#425 발생
+//       → hydrated 확인 후 이 컴포넌트를 렌더함으로써 SSR DOM = null 보장
+function MasterSettingsContent() {
   const { state, upsertStaff, removeStaff } = useHospital();
-  const [serverMode, setServerMode] = useState(false);
-  const [autoSync, setAutoSync] = useState(false);
+  const isServerSession = state.session?.authSource === "server";
+  const serverMode = isServerSession;
+
+  const qc = useQueryClient();
+  const masterStaffQuery = useMasterStaffQuery();
+  const serverStaff: StaffProfile[] = masterStaffQuery.data ?? [];
+  const serverStaffIdsRef = useRef<Set<number>>(new Set(serverStaff.map((s) => s.staffId)));
+  const syncedRef = useRef<boolean>(masterStaffQuery.isSuccess);
   const [serverBusy, setServerBusy] = useState(false);
   const [serverLastSyncAt, setServerLastSyncAt] = useState<string>("");
   const [jobFilter, setJobFilter] = useState<"ALL" | "DOCTOR" | "ADMIN">("ALL");
@@ -79,15 +91,6 @@ export function MasterSettingsScreen() {
   const phoneMidRef = useRef<HTMLInputElement | null>(null);
   const phoneLastRef = useRef<HTMLInputElement | null>(null);
 
-  // [FIX] 서버 전용 목록 상태 — 로컬 seed와 완전 분리
-  const [serverStaff, setServerStaff] = useState<StaffProfile[]>([]);
-  // [FIX] ref: stale closure 없이 최신 서버 ID Set 유지
-  const serverStaffIdsRef = useRef<Set<number>>(new Set());
-  // [FIX] 동기화 완료 여부 — 동기화 전 수정/삭제 시도 방어
-  const syncedRef = useRef<boolean>(false);
-
-  // [FIX] serverMode ON이면 서버 목록만, OFF면 로컬 seed만 표시 (혼합 금지)
-  //       active=false(비활성화된 직원)는 목록에서 제외
   const rows = useMemo(() => {
     const source = serverMode ? serverStaff : state.staff;
     return source
@@ -100,46 +103,16 @@ export function MasterSettingsScreen() {
     window.setTimeout(() => setMessage(""), 2600);
   };
 
-  const isServerSession = state.session?.authSource === "server";
-
-  const toggleServerMode = () => {
-    if (!serverMode && !isServerSession) {
-      emit("실서버 CRUD는 IAM 실로그인 세션에서만 사용할 수 있습니다.");
-      return;
-    }
-    const next = !serverMode;
-    setServerMode(next);
-    // [FIX] serverMode OFF 전환 시 서버 관련 상태 초기화
-    if (!next) {
-      setServerStaff([]);
-      serverStaffIdsRef.current = new Set();
-      syncedRef.current = false;
-      setAutoSync(false);
-    }
-  };
-
-  const toggleAutoSync = () => {
-    if (!autoSync && !isServerSession) {
-      emit("자동 동기화는 IAM 실로그인 세션에서만 사용할 수 있습니다.");
-      return;
-    }
-    setAutoSync((v) => !v);
-  };
-
-  // [FIX] syncFromServer — 서버 목록을 serverStaff에만 저장
-  //       로컬 state.staff에 upsertStaff 반복 호출 제거 (중복 생성 원인)
   const syncFromServer = async () => {
     if (!isServerSession) {
       emit("실서버 동기화는 IAM 실로그인 후 사용해주세요.");
-      setAutoSync(false);
       return;
     }
     setServerBusy(true);
     try {
-      const list = await listMasterStaffServer();
-      // [FIX] active=true인 직원만 목록에 표시 (비활성화된 직원 제외)
+      const result = await masterStaffQuery.refetch();
+      const list = result.data ?? [];
       const activeList = list.filter((x) => x.active !== false);
-      setServerStaff(activeList);
       serverStaffIdsRef.current = new Set(activeList.map((x) => x.staffId));
       syncedRef.current = true;
       setServerLastSyncAt(new Date().toLocaleTimeString("ko-KR"));
@@ -151,25 +124,13 @@ export function MasterSettingsScreen() {
     }
   };
 
-  // [FIX] 세션 없으면 실서버 모드 강제 해제
   useEffect(() => {
     if (!isServerSession) {
-      setServerMode(false);
-      setAutoSync(false);
-      setServerStaff([]);
+      qc.removeQueries({ queryKey: masterQueryKeys.staff() });
       serverStaffIdsRef.current = new Set();
       syncedRef.current = false;
     }
   }, [isServerSession]);
-
-  // [FIX] autoSync: serverMode ON + autoSync ON + 세션 있을 때만 1회 동기화
-  //       의존성에서 syncFromServer 제거하여 무한 루프 방지
-  useEffect(() => {
-    if (serverMode && autoSync && isServerSession) {
-      void syncFromServer();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverMode, autoSync, isServerSession]);
 
   const setJobType = (jobType: "DOCTOR" | "ADMIN") => {
     setForm((f) => ({
@@ -188,7 +149,6 @@ export function MasterSettingsScreen() {
 
     const payload = toStaffProfile(form);
 
-    // 로컬 데모 모드
     if (!serverMode) {
       emit(upsertStaff(payload).message);
       setForm(toFormState());
@@ -200,7 +160,6 @@ export function MasterSettingsScreen() {
       return;
     }
 
-    // [FIX] 서버 모드에서 동기화가 안 된 상태면 먼저 동기화 후 진행
     if (!syncedRef.current) {
       emit("동기화 중...");
       await syncFromServer();
@@ -208,8 +167,6 @@ export function MasterSettingsScreen() {
 
     setServerBusy(true);
     try {
-      // [FIX] 수정/신규 판단: staffId > 0 이고 동기화된 ref에 존재 → UPDATE
-      //       그 외 → CREATE (staffId 0으로 초기화)
       const isUpdate = payload.staffId > 0 && serverStaffIdsRef.current.has(payload.staffId);
 
       const saved = isUpdate
@@ -217,16 +174,16 @@ export function MasterSettingsScreen() {
         : await createMasterStaffServer({ ...payload, staffId: 0 });
 
       if (!isUpdate && saved.staffId > 0) {
-        // [FIX] 신규 등록: ref + serverStaff에 즉시 추가 (재동기화 없이 바로 수정/삭제 가능)
         serverStaffIdsRef.current.add(saved.staffId);
-        setServerStaff((prev) => [...prev, saved]);
+        qc.setQueryData(masterQueryKeys.staff(), (prev: StaffProfile[] | undefined) =>
+          prev ? [...prev, saved] : [saved]
+        );
       } else if (isUpdate) {
-        // [FIX] 수정: serverStaff 목록 해당 항목만 교체
-        setServerStaff((prev) => prev.map((s) => s.staffId === saved.staffId ? saved : s));
+        qc.setQueryData(masterQueryKeys.staff(), (prev: StaffProfile[] | undefined) =>
+          prev ? prev.map((s) => s.staffId === saved.staffId ? saved : s) : [saved]
+        );
       }
 
-      // [FIX] 로컬 store에는 upsertStaff 호출하지 않음
-      //       serverMode ON일 때는 serverStaff가 단일 진실 공급원
       emit(isUpdate ? "직원 프로필 수정 저장 완료(서버)" : "직원 프로필 신규 등록 완료(서버)");
       setForm(toFormState());
       setServerLastSyncAt(new Date().toLocaleTimeString("ko-KR"));
@@ -240,7 +197,6 @@ export function MasterSettingsScreen() {
   const selectForEdit = (staff: StaffProfile) => setForm(toFormState(staff));
 
   const onDelete = async (staff: StaffProfile) => {
-    // 로컬 데모 모드
     if (!serverMode) {
       emit(removeStaff(staff.staffId).message);
       return;
@@ -250,7 +206,6 @@ export function MasterSettingsScreen() {
       return;
     }
 
-    // [FIX] staffId 유효성만 체크 — ref 미존재 시 강제 차단 제거
     if (staff.staffId <= 0) {
       emit("삭제 불가: 유효하지 않은 직원 ID입니다.");
       return;
@@ -259,9 +214,9 @@ export function MasterSettingsScreen() {
     setServerBusy(true);
     try {
       await deactivateMasterStaffServer(staff.staffId);
-      // [FIX] serverStaff + ref에서만 제거 (로컬 store removeStaff 제거)
-      //       serverMode ON이면 serverStaff가 단일 진실 공급원이므로 충분
-      setServerStaff((prev) => prev.filter((s) => s.staffId !== staff.staffId));
+      qc.setQueryData(masterQueryKeys.staff(), (prev: StaffProfile[] | undefined) =>
+        prev ? prev.filter((s) => s.staffId !== staff.staffId) : []
+      );
       serverStaffIdsRef.current.delete(staff.staffId);
       emit("직원 프로필 비활성화 완료(서버)");
       setServerLastSyncAt(new Date().toLocaleTimeString("ko-KR"));
@@ -273,150 +228,163 @@ export function MasterSettingsScreen() {
   };
 
   return (
-    <RoleGate allowed={["ADMIN", "SYS"]}>
-      <div className="page-grid page-grid--readable">
-        <GlassCard title="마스터 설정" subtitle="의사/원무 직원 프로필 조회·등록·수정·삭제 (사진/MinIO는 후속)">
-          <div className="button-row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
-            <button type="button" className={serverMode ? "active-btn" : ""} onClick={toggleServerMode}>
-              {serverMode ? "실서버 CRUD 모드 ON" : "실서버 CRUD 모드 OFF"}
-            </button>
-            <button type="button" className={autoSync ? "active-btn" : ""} onClick={toggleAutoSync}>
-              자동 동기화 {autoSync ? "ON" : "OFF"}
-            </button>
-            <button type="button" onClick={() => void syncFromServer()} disabled={serverBusy}>직원 동기화</button>
-            {serverBusy && <span className="inline-muted">동기화/저장 중...</span>}
-            {!isServerSession && <span className="inline-muted">현재 세션: 데모 로그인</span>}
-            {!!serverLastSyncAt && <span className="inline-muted">최근 동기화: {serverLastSyncAt}</span>}
-          </div>
-          <div className="split-grid">
-            <GlassCard title="프로필 등록/수정" className="nested-card">
-              <div className="form-grid tri master-form-grid">
-                <label>
-                  <span>직무</span>
-                  <select value={form.jobType} onChange={(e) => setJobType(e.target.value as "DOCTOR" | "ADMIN")}>
-                    <option value="DOCTOR">의사</option>
-                    <option value="ADMIN">원무</option>
+    <div className="page-grid page-grid--readable">
+      <GlassCard title="마스터 설정" subtitle="의사/원무 직원 프로필 조회·등록·수정·삭제 (사진/MinIO는 후속)">
+        <div className="button-row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
+          <button type="button" onClick={() => void syncFromServer()} disabled={serverBusy}>직원 동기화</button>
+          {serverBusy && <span className="inline-muted">동기화/저장 중...</span>}
+          {serverMode
+            ? <span className="inline-muted">실서버 CRUD 모드 활성</span>
+            : <span className="inline-muted">현재 세션: 데모 로그인</span>
+          }
+          {!!serverLastSyncAt && <span className="inline-muted">최근 동기화: {serverLastSyncAt}</span>}
+        </div>
+        <div className="split-grid">
+          <GlassCard title="프로필 등록/수정" className="nested-card">
+            <div className="form-grid tri master-form-grid">
+              <label>
+                <span>직무</span>
+                <select value={form.jobType} onChange={(e) => setJobType(e.target.value as "DOCTOR" | "ADMIN")}>
+                  <option value="DOCTOR">의사</option>
+                  <option value="ADMIN">원무</option>
+                </select>
+              </label>
+              <label>
+                <span>성명</span>
+                <input value={form.staffName} onChange={(e) => setForm((f) => ({ ...f, staffName: e.target.value }))} />
+              </label>
+              <label>
+                <span>부서</span>
+                {form.jobType === "DOCTOR" ? (
+                  <select value={form.department} onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}>
+                    <option value="내과">내과</option>
+                    <option value="외과">외과</option>
+                    <option value="영상의학과">영상의학과</option>
                   </select>
-                </label>
-                <label>
-                  <span>성명</span>
-                  <input value={form.staffName} onChange={(e) => setForm((f) => ({ ...f, staffName: e.target.value }))} />
-                </label>
-                <label>
-                  <span>부서</span>
-                  {form.jobType === "DOCTOR" ? (
-                    <select value={form.department} onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}>
-                      <option value="내과">내과</option>
-                      <option value="외과">외과</option>
-                      <option value="영상의학과">영상의학과</option>
-                    </select>
-                  ) : (
-                    <input value="원무과" readOnly />
-                  )}
-                </label>
+                ) : (
+                  <input value="원무과" readOnly />
+                )}
+              </label>
 
-                <label className="master-form-grid__phone">
-                  <span>연락처</span>
-                  <div className="phone-split">
-                    <input value="010" readOnly />
-                    <input
-                      ref={phoneMidRef}
-                      inputMode="numeric"
-                      maxLength={4}
-                      value={form.phoneMid}
-                      onChange={(e) => {
-                        const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-                        setForm((f) => ({ ...f, phoneMid: v }));
-                        if (v.length >= 4) phoneLastRef.current?.focus();
-                      }}
-                      placeholder="1234"
-                    />
-                    <input
-                      ref={phoneLastRef}
-                      inputMode="numeric"
-                      maxLength={4}
-                      value={form.phoneLast}
-                      onChange={(e) => setForm((f) => ({ ...f, phoneLast: e.target.value.replace(/\D/g, "").slice(0, 4) }))}
-                      placeholder="5678"
-                    />
-                  </div>
-                </label>
+              <label className="master-form-grid__phone">
+                <span>연락처</span>
+                <div className="phone-split">
+                  <input value="010" readOnly />
+                  <input
+                    ref={phoneMidRef}
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={form.phoneMid}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                      setForm((f) => ({ ...f, phoneMid: v }));
+                      if (v.length >= 4) phoneLastRef.current?.focus();
+                    }}
+                    placeholder="1234"
+                  />
+                  <input
+                    ref={phoneLastRef}
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={form.phoneLast}
+                    onChange={(e) => setForm((f) => ({ ...f, phoneLast: e.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                    placeholder="5678"
+                  />
+                </div>
+              </label>
 
-                <label className="field-stack master-form-grid__email">
-                  <span>이메일</span>
-                  <div className="email-split">
-                    <input value={form.emailId} onChange={(e) => setForm((f) => ({ ...f, emailId: e.target.value.replace(/\s/g, "") }))} placeholder="아이디" />
-                    <span>@</span>
-                    <select value={form.emailDomainOption} onChange={(e) => setForm((f) => ({ ...f, emailDomainOption: e.target.value as EmailDomainOption }))}>
-                      <option value="naver.com">naver.com</option>
-                      <option value="daum.net">daum.net</option>
-                      <option value="google.com">google.com</option>
-                      <option value="custom">직접입력</option>
-                    </select>
-                  </div>
-                  {form.emailDomainOption === "custom" && (
-                    <input className="email-domain-custom" value={form.emailDomainCustom} onChange={(e) => setForm((f) => ({ ...f, emailDomainCustom: e.target.value.replace(/\s/g, "") }))} placeholder="도메인 직접입력 (예: hospital.co.kr)" />
-                  )}
-                </label>
-              </div>
-              <div className="button-row">
-                <button type="button" className="primary-btn" onClick={() => void onSubmit()} disabled={serverBusy}>
-                  {form.staffId ? "수정 저장" : "신규 등록"}
-                </button>
-                <button type="button" onClick={() => setForm(toFormState())}>초기화</button>
-              </div>
-            </GlassCard>
+              <label className="field-stack master-form-grid__email">
+                <span>이메일</span>
+                <div className="email-split">
+                  <input value={form.emailId} onChange={(e) => setForm((f) => ({ ...f, emailId: e.target.value.replace(/\s/g, "") }))} placeholder="아이디" />
+                  <span>@</span>
+                  <select value={form.emailDomainOption} onChange={(e) => setForm((f) => ({ ...f, emailDomainOption: e.target.value as EmailDomainOption }))}>
+                    <option value="naver.com">naver.com</option>
+                    <option value="daum.net">daum.net</option>
+                    <option value="google.com">google.com</option>
+                    <option value="custom">직접입력</option>
+                  </select>
+                </div>
+                {form.emailDomainOption === "custom" && (
+                  <input className="email-domain-custom" value={form.emailDomainCustom} onChange={(e) => setForm((f) => ({ ...f, emailDomainCustom: e.target.value.replace(/\s/g, "") }))} placeholder="도메인 직접입력 (예: hospital.co.kr)" />
+                )}
+              </label>
+            </div>
+            <div className="button-row">
+              <button type="button" className="primary-btn" onClick={() => void onSubmit()} disabled={serverBusy}>
+                {form.staffId ? "수정 저장" : "신규 등록"}
+              </button>
+              <button type="button" onClick={() => setForm(toFormState())}>초기화</button>
+            </div>
+          </GlassCard>
 
-            <GlassCard
-              title="프로필 목록"
-              subtitle={serverMode ? "실서버 목록 (active=true 직원만 표시)" : "로컬 데모 데이터"}
-              className="nested-card"
-            >
-              <div className="button-row">
-                <button type="button" className={jobFilter === "ALL" ? "active-btn" : ""} onClick={() => setJobFilter("ALL")}>전체</button>
-                <button type="button" className={jobFilter === "DOCTOR" ? "active-btn" : ""} onClick={() => setJobFilter("DOCTOR")}>의사</button>
-                <button type="button" className={jobFilter === "ADMIN" ? "active-btn" : ""} onClick={() => setJobFilter("ADMIN")}>원무</button>
-              </div>
-              <div className="table-wrap">
-                <table className="ui-table compact master-profile-table">
-                  <thead>
-                    <tr>
-                      <th>ID</th><th>직무</th><th>성명</th><th>부서</th><th>연락처</th><th>이메일</th><th>관리</th>
+          <GlassCard
+            title="프로필 목록"
+            subtitle={serverMode ? "실서버 목록 (active=true 직원만 표시)" : "로컬 데모 데이터"}
+            className="nested-card"
+          >
+            <div className="button-row">
+              <button type="button" className={jobFilter === "ALL" ? "active-btn" : ""} onClick={() => setJobFilter("ALL")}>전체</button>
+              <button type="button" className={jobFilter === "DOCTOR" ? "active-btn" : ""} onClick={() => setJobFilter("DOCTOR")}>의사</button>
+              <button type="button" className={jobFilter === "ADMIN" ? "active-btn" : ""} onClick={() => setJobFilter("ADMIN")}>원무</button>
+            </div>
+            <div className="table-wrap">
+              <table className="ui-table compact master-profile-table">
+                <thead>
+                  <tr>
+                    <th>ID</th><th>직무</th><th>성명</th><th>부서</th><th>연락처</th><th>이메일</th><th>관리</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((s) => (
+                    <tr key={s.staffId}>
+                      <td>{s.staffId}</td>
+                      <td>{s.jobType === "DOCTOR" ? "의사" : "원무"}</td>
+                      <td>{s.staffName}</td>
+                      <td>{s.department}</td>
+                      <td>{s.phone}</td>
+                      <td>{s.email}</td>
+                      <td>
+                        <div className="inline-btns">
+                          <button type="button" onClick={() => selectForEdit(s)}>수정</button>
+                          <button type="button" onClick={() => void onDelete(s)} disabled={serverBusy}>삭제</button>
+                        </div>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((s) => (
-                      <tr key={s.staffId}>
-                        <td>{s.staffId}</td>
-                        <td>{s.jobType === "DOCTOR" ? "의사" : "원무"}</td>
-                        <td>{s.staffName}</td>
-                        <td>{s.department}</td>
-                        <td>{s.phone}</td>
-                        <td>{s.email}</td>
-                        <td>
-                          <div className="inline-btns">
-                            <button type="button" onClick={() => selectForEdit(s)}>수정</button>
-                            <button type="button" onClick={() => void onDelete(s)} disabled={serverBusy}>삭제</button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {rows.length === 0 && (
-                      <tr>
-                        <td colSpan={7} className="empty-cell">
-                          {serverMode && !syncedRef.current ? "직원 동기화 버튼을 눌러주세요." : "데이터 없음"}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </GlassCard>
-          </div>
+                  ))}
+                  {rows.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="empty-cell">
+                        {serverMode && !syncedRef.current ? "직원 동기화 버튼을 눌러주세요." : "데이터 없음"}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </GlassCard>
+        </div>
 
-          {message && <div className="toast-mini">{message}</div>}
-        </GlassCard>
-      </div>
+        {message && <div className="toast-mini">{message}</div>}
+      </GlassCard>
+    </div>
+  );
+}
+
+// [MODIFIED] 껍데기 컴포넌트 — hydrated 확인 후 Content 렌더
+// 이유: useHospital()의 state.session이 SSR 시점엔 null,
+//       CSR localStorage 복원 후엔 값이 있어 DOM 트리 불일치 발생
+//       → hydrated=true 이후에만 MasterSettingsContent를 마운트해
+//         SSR DOM = null → mismatch 완전 차단
+export function MasterSettingsScreen() {
+  const { hydrated } = useHospital(); // [MODIFIED] hydrated만 참조 — session 미참조로 mismatch 원천 차단
+
+  // [ADDED] hydration 완료 전 null 반환 — SSR DOM과 일치
+  if (!hydrated) return null;
+
+  return (
+    <RoleGate allowed={["ADMIN", "SYS"]}>
+      <MasterSettingsContent />
     </RoleGate>
   );
 }

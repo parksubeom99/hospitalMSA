@@ -1,0 +1,403 @@
+# =============================================================================
+# psbMSA Hospital MSA — Docker Compose (Oracle Edition)
+# [ADDED] MySQL → Oracle XE 21c 교체 버전
+# [ADDED] Phase 2-E: Grafana + Tempo 관측성 컨테이너 추가
+# 사용법: docker compose -f docker-compose-oracle.yml up --build
+#
+# 외부 노출 포트:
+#   8180 → gatewayService  (백엔드 단일 진입점)
+#   3000 → csFrontend      (Next.js 프론트)
+#   1522 → Oracle XE       (로컬 디버깅용 — 운영 시 제거)
+#   3001 → Grafana         (관측성 대시보드 — Phase 2-E)
+#   3200 → Tempo           (Trace 백엔드 — Phase 2-E)
+#
+# 내부 전용 (호스트 미노출):
+#   8181 iamService / 8182 adminMasterService
+#   8183 clinicalService / 8184 supportService
+#   6379 Redis / 9092 Kafka
+#   4317 Tempo OTLP gRPC (내부 전용)
+#
+# [NOTE] Oracle XE 21c 제약:
+#   - CPU 2코어 / RAM 2GB / DB 크기 12GB
+#   - 로컬 포트폴리오 시연 목적으로 충분
+#
+# [IMPORTANT] 최초 기동 전 반드시 실행:
+#   docker compose -f docker-compose-oracle.yml down -v
+#   (oracle-data 볼륨이 존재하면 setup 스크립트가 재실행되지 않음)
+# =============================================================================
+
+services:
+
+  # ──────────────────────────────────────────────────────────
+  # INFRA: Oracle XE 21c
+  # [ADDED] MySQL 대체 — Oracle 공식 이미지 사용
+  # ──────────────────────────────────────────────────────────
+  oracle:
+    image: container-registry.oracle.com/database/express:21.3.0-xe
+    container_name: psb-oracle
+    restart: unless-stopped
+    environment:
+      ORACLE_PWD: ${ORACLE_SYS_PASSWORD:-Oracle1234}
+      ORACLE_CHARACTERSET: AL32UTF8
+      TZ: Asia/Seoul
+    volumes:
+      - ./docker/oracle/init:/opt/oracle/scripts/startup:ro
+      - oracle-data:/opt/oracle/oradata
+    ports:
+      - "1522:1521"
+    networks:
+      - psb-net
+    healthcheck:
+      test: ["CMD", "/opt/oracle/checkDBStatus.sh"]
+      interval: 30s
+      timeout: 20s
+      retries: 15
+      start_period: 300s
+
+  # ──────────────────────────────────────────────────────────
+  # INFRA: Redis
+  # ──────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: psb-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - psb-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # ──────────────────────────────────────────────────────────
+  # INFRA: Zookeeper
+  # ──────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: psb-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_4LW_COMMANDS_WHITELIST: "*"
+      TZ: Asia/Seoul
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+    networks:
+      - psb-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo srvr | nc localhost 2181 | grep -q 'Zookeeper version'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ──────────────────────────────────────────────────────────
+  # INFRA: Kafka
+  # ──────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: psb-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      TZ: Asia/Seoul
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    ports:
+      - "29092:29092"
+    networks:
+      - psb-net
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ──────────────────────────────────────────────────────────
+  # OBSERVABILITY: Tempo (Distributed Tracing Backend)
+  # [ADDED] Phase 2-E: Spring Boot → OTLP gRPC → Tempo → Grafana
+  # ──────────────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:2.4.1
+    container_name: psb-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # HTTP API (Grafana datasource)
+      - "4317:4317"   # OTLP gRPC (Spring Boot → Tempo)
+    networks:
+      - psb-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3200/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ──────────────────────────────────────────────────────────
+  # OBSERVABILITY: Grafana (Dashboard UI)
+  # [ADDED] Phase 2-E: Tempo datasource 자동 프로비저닝
+  # ──────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: psb-grafana
+    restart: unless-stopped
+    depends_on:
+      tempo:
+        condition: service_healthy
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      TZ: Asia/Seoul
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"   # 호스트 3001 → Grafana 3000 (프론트 3000 충돌 회피)
+    networks:
+      - psb-net
+
+  # ──────────────────────────────────────────────────────────
+  # BACKEND: iamService (Oracle 프로파일)
+  # ──────────────────────────────────────────────────────────
+  iam-service:
+    build:
+      context: ./csBackend/iamService
+      dockerfile: Dockerfile
+    container_name: psb-iam
+    restart: unless-stopped
+    depends_on:
+      oracle:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ORACLE_HOST: oracle
+      ORACLE_PORT: 1521
+      ORACLE_SID: XEPDB1
+      ORACLE_USER: his_iam
+      ORACLE_PASSWORD: ${ORACLE_SERVICE_PASSWORD:-his_password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      HIS_JWT_SECRET: ${HIS_JWT_SECRET}
+      SPRING_PROFILES_ACTIVE: oracle
+      TZ: Asia/Seoul
+    networks:
+      - psb-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8181"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+
+  # ──────────────────────────────────────────────────────────
+  # BACKEND: adminMasterService (Oracle 프로파일)
+  # ──────────────────────────────────────────────────────────
+  admin-master-service:
+    build:
+      context: ./csBackend/adminMasterService
+      dockerfile: Dockerfile
+    container_name: psb-admin
+    restart: unless-stopped
+    depends_on:
+      oracle:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      iam-service:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+    environment:
+      ORACLE_HOST: oracle
+      ORACLE_PORT: 1521
+      ORACLE_SID: XEPDB1
+      ORACLE_USER: his_admin
+      ORACLE_PASSWORD: ${ORACLE_SERVICE_PASSWORD:-his_password}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      HIS_JWT_SECRET: ${HIS_JWT_SECRET}
+      IAM_BASE_URL: http://iam-service:8181
+      CLINICAL_BASE_URL: http://clinical-service:8183
+      SUPPORT_BASE_URL: http://support-service:8184
+      SPRING_PROFILES_ACTIVE: oracle
+      # [ADDED] Phase 2-E: Tempo OTLP 엔드포인트
+      TZ: Asia/Seoul
+    networks:
+      - psb-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8182"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+
+  # ──────────────────────────────────────────────────────────
+  # BACKEND: clinicalService (Oracle 프로파일)
+  # ──────────────────────────────────────────────────────────
+  clinical-service:
+    build:
+      context: ./csBackend/clinicalService
+      dockerfile: Dockerfile
+    container_name: psb-clinical
+    restart: unless-stopped
+    depends_on:
+      oracle:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      iam-service:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+    environment:
+      ORACLE_HOST: oracle
+      ORACLE_PORT: 1521
+      ORACLE_SID: XEPDB1
+      ORACLE_USER: his_clinical
+      ORACLE_PASSWORD: ${ORACLE_SERVICE_PASSWORD:-his_password}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      HIS_JWT_SECRET: ${HIS_JWT_SECRET}
+      IAM_BASE_URL: http://iam-service:8181
+      ADMIN_BASE_URL: http://admin-master-service:8182
+      SUPPORT_BASE_URL: http://support-service:8184
+      SPRING_PROFILES_ACTIVE: oracle
+      # [ADDED] Phase 2-E: Tempo OTLP 엔드포인트
+      TZ: Asia/Seoul
+    networks:
+      - psb-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8183"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+
+  # ──────────────────────────────────────────────────────────
+  # BACKEND: supportService (Oracle 프로파일)
+  # ──────────────────────────────────────────────────────────
+  support-service:
+    build:
+      context: ./csBackend/supportService
+      dockerfile: Dockerfile
+    container_name: psb-support
+    restart: unless-stopped
+    depends_on:
+      oracle:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      iam-service:
+        condition: service_healthy
+    environment:
+      ORACLE_HOST: oracle
+      ORACLE_PORT: 1521
+      ORACLE_SID: XEPDB1
+      ORACLE_USER: his_support
+      ORACLE_PASSWORD: ${ORACLE_SERVICE_PASSWORD:-his_password}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      HIS_JWT_SECRET: ${HIS_JWT_SECRET}
+      IAM_BASE_URL: http://iam-service:8181
+      ORDER_BASE_URL: http://clinical-service:8183
+      SPRING_PROFILES_ACTIVE: oracle
+      TZ: Asia/Seoul
+    networks:
+      - psb-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8184"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+
+  # ──────────────────────────────────────────────────────────
+  # BACKEND: gatewayService
+  # ──────────────────────────────────────────────────────────
+  gateway-service:
+    build:
+      context: ./csBackend/gatewayService
+      dockerfile: Dockerfile
+    container_name: psb-gateway
+    restart: unless-stopped
+    depends_on:
+      iam-service:
+        condition: service_healthy
+      admin-master-service:
+        condition: service_healthy
+      clinical-service:
+        condition: service_healthy
+      support-service:
+        condition: service_healthy
+    environment:
+      IAM_SERVICE_URL: http://iam-service:8181
+      ADMIN_SERVICE_URL: http://admin-master-service:8182
+      CLINICAL_SERVICE_URL: http://clinical-service:8183
+      SUPPORT_SERVICE_URL: http://support-service:8184
+      GATEWAY_ALLOWED_ORIGIN: ${GATEWAY_ALLOWED_ORIGIN}
+      HIS_JWT_SECRET: ${HIS_JWT_SECRET}
+      TZ: Asia/Seoul
+    ports:
+      - "8180:8180"
+    networks:
+      - psb-net
+
+  # ──────────────────────────────────────────────────────────
+  # FRONTEND: csFrontend
+  # ──────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./csFrontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_GATEWAY_URL: http://localhost:8180
+    container_name: psb-frontend
+    restart: unless-stopped
+    depends_on:
+      - gateway-service
+    ports:
+      - "3000:3000"
+    networks:
+      - psb-net
+
+# ──────────────────────────────────────────────────────────
+# NETWORKS
+# ──────────────────────────────────────────────────────────
+networks:
+  psb-net:
+    driver: bridge
+
+# ──────────────────────────────────────────────────────────
+# VOLUMES
+# [ADDED] Phase 2-E: tempo-data, grafana-data 추가
+# ──────────────────────────────────────────────────────────
+volumes:
+  oracle-data:
+  redis-data:
+  kafka-data:
+  zookeeper-data:
+  zookeeper-log:
+  tempo-data:
+  grafana-data:

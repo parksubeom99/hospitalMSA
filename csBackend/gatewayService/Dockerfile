@@ -30,8 +30,10 @@ COPY --from=builder /workspace/build/libs/*.jar app.jar
 
 EXPOSE 8180
 
+# [MODIFIED] -Dspring.profiles.active=prod 제거
+# gatewayService는 DB 미사용으로 프로파일 영향 없으나 일관성을 위해 동일 패턴 적용
+# 프로파일은 docker-compose의 SPRING_PROFILES_ACTIVE 환경변수로 주입받음
 ENTRYPOINT ["java", \
   "-XX:+UseContainerSupport", \
   "-XX:MaxRAMPercentage=75.0", \
-  "-Dspring.profiles.active=prod", \
   "-jar", "/app/app.jar"]

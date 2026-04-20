@@ -22,17 +22,20 @@ FROM eclipse-temurin:17-jre-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache tzdata \
+RUN apk add --no-cache tzdata busybox-extras \
     && cp /usr/share/zoneinfo/Asia/Seoul /etc/localtime \
     && echo "Asia/Seoul" > /etc/timezone
 
 COPY --from=builder /workspace/build/libs/*.jar app.jar
 
-# [MODIFIED] 기존 파일의 EXPOSE 8183 → 8182로 수정 (포트 오기입 버그)
+# [MODIFIED] 기존 파일의 EXPOSE 8183 → 8182로 수정 (포트 오기입 버그) — 유지
 EXPOSE 8182
 
+# [MODIFIED] -Dspring.profiles.active=prod 제거
+# 프로파일은 docker-compose의 SPRING_PROFILES_ACTIVE 환경변수로 주입받음
+# (JVM -D 옵션이 환경변수보다 우선순위가 높아 oracle 프로파일이 무시되던 문제 수정)
+# 로컬 직접 실행 시: java -Dspring.profiles.active=oracle -jar app.jar 로 명시 필요
 ENTRYPOINT ["java", \
   "-XX:+UseContainerSupport", \
   "-XX:MaxRAMPercentage=75.0", \
-  "-Dspring.profiles.active=prod", \
   "-jar", "/app/app.jar"]

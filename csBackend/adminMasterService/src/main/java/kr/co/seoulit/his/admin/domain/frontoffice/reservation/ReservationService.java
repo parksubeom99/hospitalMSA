@@ -7,12 +7,15 @@ import kr.co.seoulit.his.admin.domain.frontoffice.reservation.dto.ReservationCre
 import kr.co.seoulit.his.admin.domain.frontoffice.reservation.dto.ReservationResponse;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.VisitService;
 import kr.co.seoulit.his.admin.domain.frontoffice.visit.dto.VisitCreateRequest;
+import kr.co.seoulit.his.admin.domain.master.patient.Patient;
+import kr.co.seoulit.his.admin.domain.master.patient.PatientRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -21,6 +24,7 @@ import java.util.Map;
 public class ReservationService {
 
     private final ReservationRepository reservations;
+    private final PatientRepository patients;
     private final VisitService visits;
     private final AuditClient audit;
 
@@ -103,7 +107,7 @@ public class ReservationService {
                 r.getPatientName(),
                 r.getDepartmentCode(),
                 r.getDoctorId(),
-                null,
+                "RESERVATION",
                 null
         ));
 
@@ -112,13 +116,21 @@ public class ReservationService {
         r.setUpdatedAt(LocalDateTime.now());
         Reservation saved = reservations.save(r);
 
-        audit.write("RESERVATION_CHECKED_IN", "RESERVATION", String.valueOf(saved.getReservationId()), null,
-                Map.of("visitId", null));
+        Map<String, Object> detail = new HashMap<>();
+        detail.put("visitId", visit.visitId() != null ? String.valueOf(visit.visitId()) : "");
+        audit.write("RESERVATION_CHECKED_IN", "RESERVATION", String.valueOf(saved.getReservationId()), null, detail);
 
         return toResponse(saved);
     }
 
     private ReservationResponse toResponse(Reservation r) {
+        // Patient JOIN — phone 조회
+        String phone = null;
+        if (r.getPatientId() != null) {
+            phone = patients.findById(r.getPatientId())
+                    .map(Patient::getPhone)
+                    .orElse(null);
+        }
         return new ReservationResponse(
                 r.getReservationId(),
                 r.getPatientId(),
@@ -131,7 +143,8 @@ public class ReservationService {
                 r.getCreatedAt(),
                 r.getUpdatedAt(),
                 r.getCanceledAt(),
-                r.getCancelReason()
+                r.getCancelReason(),
+                phone
         );
     }
 

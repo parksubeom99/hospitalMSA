@@ -8,8 +8,13 @@ import { useHospital } from "@/shared/store/HospitalStore";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { state, logout, resetDemoData } = useHospital();
-  const role = state.session?.role;
+  const { hydrated, state, logout, resetDemoData } = useHospital(); // [MODIFIED] hydrated 추가
+  // [MODIFIED] hydration 완료 전까지 role을 null로 고정
+  // 이유: SSR은 session=null → role=undefined → "로그아웃" 텍스트
+  //       Client는 localStorage 복원 후 → role 존재 → "system(SYS)" 텍스트
+  //       → #425 text content mismatch 발생
+  // 해결: hydrated=true 이후에만 실제 role 사용
+  const role = hydrated ? state.session?.role : undefined; // [MODIFIED]
 
   return (
     <div className="app-bg">
