@@ -1,6 +1,6 @@
 # 발표 후 작업 리스트 v2 — Claude Code 인계용
 
-**기록일**: 2026-04-24 (v2.1: 2026-04-24 S-1 완료 반영)
+**기록일**: 2026-04-24 (v2.2: 2026-04-24 S-2 부분 완료 반영 — PR #2 머지)
 **목표**: 면접 / 이력서 / 포트폴리오 완성도 향상
 **실행 주체**: Claude Code
 **대상 리포지토리**: `parksubeom99/hospitalMSA` (master)
@@ -86,9 +86,29 @@
 
 ---
 
-## S-2. Gateway OpenTelemetry 계측 추가 (관측성 완결)
+## S-2. Gateway OpenTelemetry 계측 추가 (관측성 완결) 🟡 **부분 완료 (2026-04-24, PR #2 머지)**
 
 **우선순위**: 🔴 최우선 (README/PPT의 분산 추적 스토리 완성)
+
+### 완료 보고 (PR #2 — `6ee695d`)
+
+- 도구: **Micrometer Tracing 패턴** (admin/clinical과 동일) — v2 원안의 javaagent 방식 대신 채택
+- 추가 의존성: `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp`
+- 설정 파일: `csBackend/gatewayService/src/main/resources/application.yml`
+- 검증: Grafana Tempo Service Name 드롭다운에 `gateway-service` 등장 ✅
+- 부수 가치: `/api/admin/dashboard/summary` 요청 시 **3-span trace 자동 생성**:
+  - `gateway-service: http get` (2.54ms)
+  - └ `security filterchain before` (1.74ms) — JWT 인증 병목 가시화
+  - └ `security filterchain after` (165µs)
+- 캡처: `docs/image/observability/gateway-otel-tempo-3span.png`
+
+### 부분 완료인 이유 — 별 PR(S-2-B)로 분리된 작업
+
+작업 중 **두 가지 별개 이슈** 발견:
+1. Reactor Netty downstream client에 `traceparent` 헤더 전파 미구현 → cross-service trace 단절
+2. **admin/clinical도 HTTP server span을 생성하지 않음** (Kafka publisher span만) — Phase 2-E 시점부터 잠재했던 문제
+
+→ 본 PR은 Gateway 측 OTel 추가까지만 마무리. Cross-service waterfall은 S-2-B 후속 PR로 분리.
 
 ### 왜 이 작업을 하는가
 
@@ -107,29 +127,20 @@
 
 ### 체크리스트
 
-- [ ] `docker/otel/opentelemetry-javaagent.jar` 파일 존재 확인 (이미 다른 서비스가 사용 중)
-- [ ] `docker-compose-oracle.yml`의 `gateway-service` 블록에 아래 환경변수 추가:
-  ```yaml
-  JAVA_TOOL_OPTIONS: "-javaagent:/otel/opentelemetry-javaagent.jar"
-  OTEL_SERVICE_NAME: gateway-service
-  OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
-  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
-  OTEL_TRACES_EXPORTER: otlp
-  OTEL_METRICS_EXPORTER: none
-  OTEL_LOGS_EXPORTER: none
-  ```
-- [ ] `gateway-service` 블록에 volumes 추가: `./docker/otel/opentelemetry-javaagent.jar:/otel/opentelemetry-javaagent.jar:ro`
-- [ ] `docker-compose-oracle.yml` 변경 사항에 주석(`# [ADDED 2026-04-xx] OTel 계측 — 커밋 SHA 참조`) 추가
-- [ ] `docker compose -f docker-compose-oracle.yml build gateway-service` 성공
-- [ ] `docker compose -f docker-compose-oracle.yml up -d` 후 `docker logs psb-gateway | grep -i "OpenTelemetry"` 초기화 로그 확인
-- [ ] Grafana (`localhost:3001`) → Explore → Tempo → Service Name 드롭다운에 `gateway-service` 등장 확인
-- [ ] 브라우저에서 로그인 → `/admin/dashboard/summary` 호출 → Tempo Waterfall에 **Gateway → Admin 2-span chain** 표시 캡처
-- [ ] README의 분산 추적 섹션에 해당 스크린샷 추가 (기존 5장 → 6장)
+- ⚪ ~~`docker/otel/opentelemetry-javaagent.jar` 파일 존재 확인~~ — **무효**: javaagent 대신 Micrometer 패턴 채택
+- ⚪ ~~`docker-compose-oracle.yml` env 추가~~ — **무효**: 동일 이유
+- ⚪ ~~`gateway-service` 블록 volumes 추가~~ — **무효**: 동일 이유
+- ⚪ ~~docker-compose 주석 추가~~ — **무효**: docker-compose 변경 자체 없음
+- [x] `docker compose -f docker-compose-oracle.yml build gateway-service` 성공 (PR #2)
+- [x] `docker compose up -d` 후 gateway 정상 기동 (3.3초) — `docker logs psb-gateway` 확인
+- [x] Grafana → Explore → Tempo → Service Name 드롭다운에 `gateway-service` 등장 확인 ✅
+- [ ] 브라우저 → `/admin/dashboard/summary` → Tempo Waterfall에 **Gateway → Admin 2-span chain** — 🔄 **S-2-B PR로 이관**
+- [x] README 분산 추적 섹션에 캡처 추가 (gateway-otel-tempo-3span.png — 6번째 자료)
 
 ### 완료 기준
 
-- Grafana에서 `http get /admin/dashboard/summary` 트레이스 클릭 시 `gateway-service` 스팬이 루트로 표시
-- 총 span 수 2개 이상 (Gateway 1 + Admin 1)
+- [x] Grafana에서 `http get /api/admin/dashboard/summary` 트레이스 클릭 시 `gateway-service` 스팬이 루트로 표시 ✅ (3-span 중첩 trace 확인)
+- [ ] 총 span 수 2개 이상 (Gateway 1 + Admin 1) — 🔄 **S-2-B 이관**: 현재 gateway 단독 trace 3-span. Cross-service chain은 (a) Reactor Netty traceparent 전파 + (b) admin/clinical HTTP server span 활성화 두 작업 필요
 
 ---
 
@@ -562,7 +573,8 @@
 
 ---
 
-**문서 버전**: v2.1 (S-1 완료 반영 + OTel 4→2 정정 + SHA 매핑 갱신)
+**문서 버전**: v2.2 (S-2 부분 완료 반영 — PR #2 `6ee695d`)
 **생성일**: 2026-04-24
-**v2.1 갱신**: 2026-04-24 (BFG 적용 직후)
+**v2.1 갱신**: 2026-04-24 (BFG 적용 직후 — S-1 완료 + OTel 4→2 정정 + SHA 매핑 갱신)
+**v2.2 갱신**: 2026-04-24 (PR #2 머지 직후 — S-2 gateway 측 완료, S-2-B 후속 PR로 cross-service 이관)
 **다음 갱신 기준**: 각 항목 완료 시 체크박스 + `docs:` 커밋
