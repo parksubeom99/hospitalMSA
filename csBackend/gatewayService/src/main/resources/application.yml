@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: gateway-service
+  # [ADDED 2026-04-24, post-pres-2] Reactor Context Propagation
+  #   - Spring Cloud Gateway가 downstream(admin/clinical) 호출 시 traceparent 헤더 전파
+  #   - "auto" = micrometer-context-propagation 클래스패스 감지 시 자동 활성화
+  reactor:
+    context-propagation: auto
   cloud:
     gateway:
       default-filters:
@@ -65,6 +70,20 @@ management:
     web:
       exposure:
         include: health,info,metrics
+  # [ADDED 2026-04-24, post-pres-2] OpenTelemetry 분산추적
+  #   - admin/clinical과 동일 패턴 (OTLP HTTP exporter → Tempo 4318)
+  #   - 100% 샘플링 (개발/시연 환경 — 운영 시 0.1 등으로 낮춰야 함)
+  observations:
+    http:
+      server:
+        requests:
+          enabled: true   # WebFlux server observation 명시 활성화 (admin과 동일)
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: http://tempo:4318/v1/traces
 
 his:
   jwt:

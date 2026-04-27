@@ -134,7 +134,25 @@ Kafka 발행과 DB 저장의 원자성 문제 해결. DB 트랜잭션 내에 Out
 **구현:**
 - `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp`
 - HTTP 4318 엔드포인트로 Trace 전송
-- Admin → Gateway → Security FilterChain 포함 Waterfall Trace 확인
+- 적용 서비스: `admin-master-service`, `clinical-service`, **`gateway-service` (post-pres-2 PR로 추가)**
+
+**Gateway 트레이스 — JWT 인증 필터 체인 가시화** *(post-pres-2 PR, 2026-04-24)*
+
+![Gateway OTel 3-span trace](docs/image/observability/gateway-otel-tempo-3span.png)
+
+Gateway가 `/api/admin/dashboard/summary` 요청을 받았을 때 생성되는 3-span trace:
+
+```
+gateway-service: http get                (2.54ms) ─ 전체 요청 lifecycle
+  └─ security filterchain before         (1.74ms) ─ JWT 검증 단계 (병목 가시화)
+      └─ security filterchain after      (165µs)  ─ 응답 처리 단계
+```
+
+**적용 패턴:** admin/clinical과 동일하게 Spring Boot 표준 의존성 + `application.yml`만 수정 (별도 javaagent jar 불필요 → 전 서비스 일관)
+
+**향후 작업 (별 PR 분리):**
+- Reactor Netty 다운스트림 client에 트레이스 컨텍스트 전파 추가 → admin/clinical과의 cross-service Waterfall 완결
+- Phase 2-E 시점의 admin/clinical도 동기 HTTP server span 보강 검토
 
 ---
 
