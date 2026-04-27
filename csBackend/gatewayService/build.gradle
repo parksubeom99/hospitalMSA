@@ -26,6 +26,12 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
+    // [ADDED 2026-04-24, post-pres-2] Gateway 분산추적 활성화 (admin/clinical과 동일 패턴)
+    //   - Micrometer Tracing → OTLP HTTP exporter → Tempo (4318/v1/traces)
+    //   - 환경변수/javaagent 방식 대신 Spring Boot 표준 의존성 채택 → 전 서비스 패턴 통일
+    implementation 'io.micrometer:micrometer-tracing-bridge-otel'
+    implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
+
     // [FIXED 2026-04-16] WebFlux starter 명시
     // 원인: spring-boot-starter-security 단독 사용 시 서블릿 기반
     //       SecurityAutoConfiguration이 먼저 잡혀 @EnableWebFluxSecurity가
