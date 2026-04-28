@@ -1,0 +1,58 @@
+# 줄바꿈 정책 — LF 표준 (Java/Spring 표준 + Git 권장)
+# 적용 시점: 본 .gitattributes commit 이후 신규/수정 파일부터 자동 LF 정규화
+# 기존 파일 일괄 정규화는 별도 후속 작업 필요: `git add --renormalize .`
+
+# 기본: 텍스트 파일 자동 감지 + LF로 정규화
+* text=auto eol=lf
+
+# Java / Kotlin / Spring
+*.java     text eol=lf
+*.kt       text eol=lf
+*.kts      text eol=lf
+*.gradle   text eol=lf
+*.groovy   text eol=lf
+*.properties text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.xml      text eol=lf
+*.json     text eol=lf
+
+# 프론트엔드
+*.ts       text eol=lf
+*.tsx      text eol=lf
+*.js       text eol=lf
+*.jsx      text eol=lf
+*.css      text eol=lf
+*.html     text eol=lf
+*.md       text eol=lf
+
+# 셸 스크립트 (Linux 실행)
+*.sh       text eol=lf
+gradlew    text eol=lf
+
+# SQL / 환경 설정
+*.sql      text eol=lf
+*.env      text eol=lf
+.env.*     text eol=lf
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+
+# Windows 전용 — CRLF 유지
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+
+# 바이너리 — 텍스트 변환 차단
+*.jar      binary
+*.war      binary
+*.class    binary
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.ico      binary
+*.pdf      binary
+*.zip      binary
+*.tar      binary
+*.gz       binary
+*.pem      binary
+*.p12      binary
