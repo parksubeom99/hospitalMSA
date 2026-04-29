@@ -195,7 +195,7 @@ gateway-service: http get                (2.54ms) ─ 전체 요청 lifecycle
 | Observability | Grafana, Grafana Tempo, OpenTelemetry (OTLP) |
 | Container | Docker, Docker Compose (10 containers + 2 observability) |
 | Auth | JWT (HMAC-SHA256), RBAC, HttpOnly Cookie |
-| Test | JUnit5, Mockito (7개 단위 테스트) |
+| Test | JUnit5, Mockito (18개 단위 테스트, 6개 파일) |
 | CI/CD | GitHub Actions (push 시 자동 테스트) |
 | Build | Gradle 8.x, Yarn |
 
@@ -254,7 +254,7 @@ hospitalMSA/
 │   ├── gatewayService/       — Spring Cloud Gateway, JWT 검증 필터
 │   ├── iamService/           — 인증·인가, RBAC, RefreshToken
 │   ├── adminMasterService/   — 접수·예약·청구·환자·대기열
-│   │   └── src/test/         — VisitServiceTest (4개), VisitRegisteredConsumerTest (3개)
+│   │   └── src/test/         — 6개 파일 / 18 @Test (Saga Consumer + 회귀 방지)
 │   ├── clinicalService/      — 진료·EMR·SOAP·오더·Saga Consumer
 │   └── supportService/       — 검사·약제·방사선·워크리스트
 ├── csFrontend/               — Next.js 14, React Query, TypeScript
@@ -380,7 +380,7 @@ Last 1 hour 기준 서비스별 호출 이력. Duration 컬럼으로 Outlier(이
 | Phase 2-A | Oracle XE 21c 포팅 + Flyway 4개 서비스 | ✅ 완료 |
 | Phase 2-B | React Query 전 화면 서버 연동 | ✅ 완료 |
 | Phase 2-C | Kafka VISIT_REGISTERED 체인 완성 + 멱등성 처리 | ✅ 완료 |
-| Phase 2-D | JUnit5 / Mockito 단위 테스트 7개 + GitHub Actions CI | ✅ 완료 |
+| Phase 2-D | JUnit5 / Mockito 단위 테스트 18개 (Saga 4종 + 회귀) + GitHub Actions CI | ✅ 완료 |
 | Phase 2-E | Grafana + Tempo 분산 추적 Waterfall 확인 | ✅ 완료 |
 | Phase 3 | AWS EC2 + RDS 클라우드 배포 | 🔄 진행 중 |
 
@@ -388,12 +388,19 @@ Last 1 hour 기준 서비스별 호출 이력. Duration 컬럼으로 Outlier(이
 
 ## 🧪 테스트 현황
 
-| 테스트 파일 | 테스트 수 | 핵심 검증 내용 |
-|-----------|---------|-------------|
-| VisitServiceTest | 4개 | 현장접수 생성, 예약내원 접수, 취소, Outbox 이벤트 발행 |
-| VisitRegisteredConsumerTest | 3개 | Kafka Consumer 멱등성 처리, visit_clinical_status INSERT |
+| 모듈 | 테스트 파일 | 테스트 수 | 핵심 검증 내용 |
+|-----|-----------|---------|-------------|
+| admin | VisitServiceTest | 4개 | 현장접수 생성, 예약내원 접수, 취소, Outbox 이벤트 발행 |
+| admin | BillingRequestedConsumerTest | 3개 | Saga **수납 진입점** — Invoice 생성 + BILLING_COMPLETED outbox / 멱등성 / 예외 시 BILLING_FAILED 보상 |
+| admin | ReservationServiceTest | 2개 | **회귀 방지** — 예약내원 체크인 시 status=CHECKED_IN + Visit 자동 매핑 (commit 03d50d6 대응) |
+| clinical | VisitRegisteredConsumerTest | 3개 | Kafka Consumer 멱등성 처리, visit_clinical_status INSERT |
+| clinical | BillingCompletedConsumerTest | 4개 | Saga 종료(BILLED 전환) + BILLING_FAILED 수동 보상 + 양방향 멱등성 |
+| clinical | DiagnosticOrderCompletedConsumerTest | 2개 | 진단 오더 완결 → markFinalOrderReady + 멱등성 |
+| **합계** | **6개 파일** | **18개** | Saga 핵심 분기 + 회귀 방지 |
 
-**CI/CD:** `.github/workflows/ci.yml` — `feature/phase2-oracle` 브랜치 push 시 자동 실행
+**CI/CD:** `.github/workflows/ci.yml` — `master` 또는 `feature/phase2-oracle` push/PR 시 자동 실행
+- `test-admin-master` 잡: adminMasterService 전체 단위 테스트 (9개 @Test)
+- `test-clinical` 잡: clinicalService 전체 단위 테스트 (9개 @Test)
 
 ---
 
