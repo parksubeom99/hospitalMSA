@@ -210,10 +210,9 @@ gateway-service: http get                (2.54ms) ─ 전체 요청 lifecycle
 ### 실행
 
 ```cmd
-:: 1. 클론
+:: 1. 클론 (master에 모든 변경사항 머지 완료)
 git clone https://github.com/parksubeom99/hospitalMSA.git
 cd hospitalMSA
-git checkout feature/phase2-oracle
 
 :: 2. 전체 스택 기동 (Oracle 포함 12컨테이너)
 docker compose -f docker-compose-oracle.yml up -d
