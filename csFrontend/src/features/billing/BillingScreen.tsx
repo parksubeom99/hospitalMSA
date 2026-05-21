@@ -21,18 +21,18 @@ function backendInvoiceStatusLabel(status?: string) {
 }
 
 export function BillingScreen() {
-  const { state, patientsById, generateInvoiceFromFinalOrder, payInvoice, updateVisitStatus } = useHospital();
+  const { state, demo, patientsById, generateInvoiceFromFinalOrder, payInvoice, updateVisitStatus } = useHospital();
   const qc = useQueryClient(); // [ADDED] 수납완료 후 dashboard/reception 즉시 갱신용
 
   // [MODIFIED] COMPLETED 환자를 드롭다운에서 제외
   // 도메인 규칙: 수납 완료(COMPLETED) = 방문 종료. 재선택 방지.
   const billableVisits = useMemo(() =>
-    state.visits.filter(v => v.status !== "COMPLETED"),
-    [state.visits]
+    demo.visits.filter(v => v.status !== "COMPLETED"),
+    [demo.visits]
   );
 
   const [visitId, setVisitId] = useState<number>(() => {
-    const withFinalOrder = Object.keys(state.finalOrders).map(Number);
+    const withFinalOrder = Object.keys(demo.finalOrders).map(Number);
     // [MODIFIED] COMPLETED 제외된 목록에서 초기값 선택
     const firstBillable = billableVisits[0]?.id ?? 0;
     return withFinalOrder.find(id => billableVisits.some(v => v.id === id)) ?? firstBillable;
@@ -45,14 +45,14 @@ export function BillingScreen() {
   const serverInvoices: BackendInvoice[] = invoicesQuery.data ?? [];
   const [lastServerPayment, setLastServerPayment] = useState<{ paymentId: number; method: string; paidAt?: string } | null>(null);
 
-  const targetVisit = state.visits.find((v) => v.id === visitId);
+  const targetVisit = demo.visits.find((v) => v.id === visitId);
   const patient = targetVisit ? patientsById[targetVisit.patientId] : undefined;
 
   const latestInvoice = useMemo(() => {
-    return state.invoices
+    return demo.invoices
       .filter((i) => i.visitId === visitId)
       .sort((a, b) => b.invoiceId - a.invoiceId)[0];
-  }, [state.invoices, visitId]);
+  }, [demo.invoices, visitId]);
 
   const latestServerInvoice = useMemo(() => {
     return serverInvoices
@@ -60,7 +60,7 @@ export function BillingScreen() {
       .sort((a, b) => b.invoiceId - a.invoiceId)[0];
   }, [serverInvoices, visitId]);
 
-  const finalOrder = state.finalOrders[visitId];
+  const finalOrder = demo.finalOrders[visitId];
 
   const emit = (msg: string) => {
     setMessage(msg);

@@ -13,7 +13,7 @@ import { fetchEmergencyCount } from "@/shared/services/dashboard/dashboardApi";
 import { useReservationsQuery } from "@/shared/services/reception/receptionQueries"; // [P1] 서버 예약 데이터
 
 function DashboardContent() {
-  const { state, capacity, patientsById, setEmergencyCount } = useHospital();
+  const { state, demo, capacity, patientsById, setEmergencyCount } = useHospital();
 
   // authSource === "server" = IAM 실로그인으로 발급된 유효한 JWT 보유 상태
   // 데모 세션도 accessToken(데모용)이 존재하므로 !!accessToken 으로 판단하면 안 됨
@@ -34,7 +34,7 @@ function DashboardContent() {
 
   // 로컬 접수 목록 (항상 준비 — 서버 데이터 없을 때 fallback)
   const localReceptionRows = useMemo(() =>
-    state.visits
+    demo.visits
       .slice()
       .sort((a, b) => b.id - a.id)
       .slice(0, 10)
@@ -49,11 +49,11 @@ function DashboardContent() {
           registeredAt: visit.registeredAt,
         };
       }),
-    [state.visits, patientsById]
+    [demo.visits, patientsById]
   );
 
   const localReservationRows = useMemo(() =>
-    state.reservations
+    demo.reservations
       .filter((r) => r.status === "RESERVED")
       .slice()
       .sort((a, b) => a.reservedAt.localeCompare(b.reservedAt))
@@ -67,7 +67,7 @@ function DashboardContent() {
           phoneMasked: patient ? maskPhone(patient.phone) : "-",
         };
       }),
-    [state.reservations, patientsById]
+    [demo.reservations, patientsById]
   );
 
   const syncServerSummary = async () => {
@@ -91,7 +91,7 @@ function DashboardContent() {
     const reservation = Math.max(0, Number(serverSummary.counts.reservation || 0));
     // [FIXED] 응급은 admin_config 서버 설정값 사용 (visit 집계 아님)
     //         동기화 시 fetchEmergencyCount()로 서버값 반영, 없으면 로컬 emergencyCount 유지
-    const emergency = Math.max(0, state.emergencyCount);
+    const emergency = Math.max(0, demo.emergencyCount);
     const current = waitingAndInTreatment + reservation + emergency;
     const max = capacity.max;
     const level = (current >= max ? "FULL" : current >= 25 ? "DANGER" : current >= 20 ? "WARN" : "SAFE") as import("@/shared/types/domain").CapacityLevel;

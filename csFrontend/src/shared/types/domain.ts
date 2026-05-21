@@ -140,8 +140,18 @@ export interface CapacitySummary {
   emergency: number;
 }
 
-export interface HospitalState {
+// [B-1] 상태 일원화 — 세션 슬라이스 / 데모 슬라이스 분리
+// 서버 데이터의 단일 진실 공급원(SSOT)은 React Query 캐시.
+// 아래 DemoState는 백엔드 없이 동작하는 데모 모드 전용 격리 슬라이스이며,
+// authSource === "server" 일 때는 화면이 이 슬라이스를 참조하지 않는다.
+
+/** 인증/세션 슬라이스 — 서버·데모 공통 */
+export interface SessionState {
   session: UserSession | null;
+}
+
+/** 데모 모드 전용 슬라이스 (localStorage 영속) — 서버 모드에서는 미사용 */
+export interface DemoState {
   emergencyCount: number;
   patients: Patient[];
   reservations: Reservation[];

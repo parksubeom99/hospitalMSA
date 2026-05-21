@@ -20,21 +20,21 @@ const INJECTION_CATALOG: FinalOrderInjectionItem[] = [
 ];
 
 export function OrdersScreen() {
-  const { state, patientsById, saveFinalOrder } = useHospital();
+  const { state, demo, patientsById, saveFinalOrder } = useHospital();
 
 
   // 조건: soaps에 해당 visitId 키가 있고(SOAP 작성됨),
   //       examOrders에 해당 visitId가 있고 항목이 1개 이상(검사오더 완료)
   const activeVisits = useMemo(
-    () => state.visits
+    () => demo.visits
       .filter(v => {
         if (v.status === "COMPLETED") return false;
-        const hasSoap = v.id in state.soaps;
-        const hasExamOrder = Array.isArray(state.examOrders[v.id]) && state.examOrders[v.id].length > 0;
+        const hasSoap = v.id in demo.soaps;
+        const hasExamOrder = Array.isArray(demo.examOrders[v.id]) && demo.examOrders[v.id].length > 0;
         return hasSoap && hasExamOrder;
       })
       .sort((a, b) => b.id - a.id),
-    [state.visits, state.soaps, state.examOrders]
+    [demo.visits, demo.soaps, demo.examOrders]
   );
   const [visitId, setVisitId] = useState<number>(activeVisits[0]?.id ?? 0);
   const [types, setTypes] = useState<FinalOrderType[]>([]);
@@ -62,7 +62,7 @@ export function OrdersScreen() {
     : "미동기화";
 
   useEffect(() => {
-    const fo = state.finalOrders[visitId];
+    const fo = demo.finalOrders[visitId];
     if (!fo) return;
     setTypes([...fo.types] as FinalOrderType[]);
     setMedRows(fo.medications ?? []);
@@ -72,7 +72,7 @@ export function OrdersScreen() {
     setWardNo(fo.admission?.wardNo ?? 1);
     setAdmitDate(fo.admission?.admitDate ?? todayDate());
     setDischargeDate(fo.admission?.dischargeDate ?? daysAfterToday(3));
-  }, [visitId, state.finalOrders]);
+  }, [visitId, demo.finalOrders]);
 
   const visit = activeVisits.find(v => v.id === visitId);
   const patient = visit ? patientsById[visit.patientId] : undefined;
@@ -373,10 +373,10 @@ export function OrdersScreen() {
                       </tr>
                     </thead>
                     <tbody>
-                      {Object.values(state.finalOrders)
+                      {Object.values(demo.finalOrders)
                         .filter((fo) => fo.types.includes("ADMISSION") && fo.admission)
                         .map((fo) => {
-                          const v = state.visits.find((it) => it.id === fo.visitId);
+                          const v = demo.visits.find((it) => it.id === fo.visitId);
                           const p = v ? patientsById[v.patientId] : undefined;
                           if (!p || !fo.admission) return null;
                           return (

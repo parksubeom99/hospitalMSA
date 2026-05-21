@@ -10,19 +10,24 @@ import { loginAuth, logoutAuth, meAuth } from "@/shared/services/authApi";
 import { clearStoredAuthTokens, loadStoredAuthTokens, saveStoredAuthTokens } from "@/shared/services/tokenStorage";
 import type {
   CapacitySummary,
+  DemoState,
   ExamCategory,
   ExamOrderItem,
   FinalOrderAdmission,
   FinalOrderDraft,
-  HospitalState,
   MedicationCatalogItem,
+  Patient,
   RoleCode,
+  SessionState,
   StaffProfile,
   UserSession,
   VisitStatus,
 } from "@/shared/types/domain";
 
-const STORAGE_KEY = "hospital-msa-front-4svc-v2";
+// [B-1] 상태 일원화 — 영속 키 v3
+// v2는 { session, ...domain } 단일 평면 구조였으나, v3부터 { session, demo } 2-슬라이스 구조.
+// 키를 올려 구버전 데이터와의 형상 충돌을 차단(구버전 데이터는 무시되고 seed로 시작).
+const STORAGE_KEY = "hospital-msa-front-4svc-v3";
 
 export const MEDICATION_CATALOG: MedicationCatalogItem[] = [
   { drugCode: "DRUG001", drugName: "타이레놀정", drugGroup: "진통제", unitPrice: 1000 },
@@ -63,7 +68,9 @@ const MOCK_ACCOUNTS = [
   { username: "lee123", password: "doctor", role: "DOC" as const, displayName: "이순신 의사", doctorStaffId: 1 },
 ];
 
-function createSeedState(): HospitalState {
+// [B-1] createSeedState → createSeedDemoState
+// 데모 슬라이스 전용 시드. session은 더 이상 이 슬라이스에 포함되지 않는다.
+function createSeedDemoState(): DemoState {
   // [MODIFIED] new Date() → 고정 날짜 문자열
   // 이유: SSR(서버) 실행 시각 ≠ CSR(클라이언트) hydration 시각 → React #425/#418/#423 hydration mismatch
   // 해결: seed 데이터는 고정 ISO 문자열 사용, 런타임 now()는 액션 시점에만 호출
@@ -73,8 +80,8 @@ function createSeedState(): HospitalState {
     const mm = String(m).padStart(2, "0");
     return `${SEED_DATE}T${hh}:${mm}:00.000Z`;
   };
+  void at;
   return {
-    session: null,
     emergencyCount: 3,
     // [MODIFIED v3] 서버 시드 축소(reservation/visit INSERT 제거)에 맞춰 로컬도 빈 상태.
     // patients: 서버 seed_demo_reset.sql v3.1과 동일한 5명 (성/이름 모두 distinct)
@@ -113,7 +120,10 @@ interface HospitalContextValue {
   // SSR(false) → client useEffect 완료(true)
   // RoleGate가 이 값을 보고 hydration 전 렌더를 억제 → #418/#423/#425 해소
   hydrated: boolean;
-  state: HospitalState;
+  // [B-1] state: 세션 슬라이스 ({ session }) — 서버·데모 공통
+  state: SessionState;
+  // [B-1] demo: 데모 모드 전용 격리 슬라이스 — 서버 모드 화면은 참조 금지
+  demo: DemoState;
   capacity: CapacitySummary;
   medicationCatalog: MedicationCatalogItem[];
   loginAs: (role: RoleCode) => void;
@@ -139,15 +149,15 @@ interface HospitalContextValue {
   payInvoice: (invoiceId: number, method: "CARD" | "CASH") => ActionResult;
   upsertStaff: (staff: StaffProfile) => ActionResult;
   removeStaff: (staffId: number) => ActionResult;
-  patientsById: Record<number, HospitalState["patients"][number]>;
+  patientsById: Record<number, Patient>;
 }
 
 const HospitalContext = createContext<HospitalContextValue | null>(null);
 
-function buildCapacity(state: HospitalState): CapacitySummary {
-  const waitingAndInTreatment = state.visits.filter(v => !v.cancelled && (v.status === "WAITING" || v.status === "IN_TREATMENT")).length;
-  const reservation = state.reservations.filter(r => r.status === "RESERVED").length;
-  const emergency = state.emergencyCount;
+function buildCapacity(demo: DemoState): CapacitySummary {
+  const waitingAndInTreatment = demo.visits.filter(v => !v.cancelled && (v.status === "WAITING" || v.status === "IN_TREATMENT")).length;
+  const reservation = demo.reservations.filter(r => r.status === "RESERVED").length;
+  const emergency = demo.emergencyCount;
   const current = waitingAndInTreatment + reservation + emergency;
   const level = getCapacityLevel(current, MAX_TOTAL_CAPACITY);
   return {
@@ -162,7 +172,10 @@ function buildCapacity(state: HospitalState): CapacitySummary {
 }
 
 export function HospitalProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<HospitalState>(createSeedState);
+  // [B-1] 단일 Provider 내부 2-슬라이스 분리
+  // session: 인증 상태 (서버·데모 공통) / demo: 데모 모드 전용 도메인 데이터
+  const [session, setSession] = useState<UserSession | null>(null);
+  const [demo, setDemo] = useState<DemoState>(createSeedDemoState);
   // [MODIFIED] hydrated 의미 확장:
   // 이전: localStorage 복원 완료
   // 변경: localStorage 복원 + 서버 세션 토큰 유효성 검증 완료
@@ -171,7 +184,7 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // [MODIFIED] 비동기 토큰 검증 포함 초기화 흐름
-    // 1. localStorage 복원
+    // 1. localStorage 복원 ({ session, demo } 2-슬라이스)
     // 2. authSource="server" 세션이 있으면 /auth/me 호출로 토큰 유효성 검증
     //    → 유효: 세션 유지
     //    → 만료/실패: session=null + clearStoredAuthTokens() (401 루프 차단)
@@ -180,29 +193,31 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
-        const parsed = JSON.parse(raw) as HospitalState;
-        if (!parsed?.patients || !parsed?.visits) return;
+        const parsed = JSON.parse(raw) as { session: UserSession | null; demo: DemoState };
+        if (!parsed?.demo?.patients || !parsed?.demo?.visits) return;
 
-        const normalizedSessionRole = normalizeRoleCode((parsed as any)?.session?.role);
-        const normalized = {
-          ...parsed,
-          session: parsed.session
-            ? {
-                ...parsed.session,
-                role: (normalizedSessionRole ?? "SYS") as RoleCode,
-                authSource: parsed.session.authSource === "server" ? "server" : "demo",
-              }
-            : null,
-          rrnUnmaskAudit: (parsed.rrnUnmaskAudit ?? []).map((a) => ({
+        // [B-1] 데모 슬라이스 복원 (rrnUnmaskAudit roleCode 정규화 포함)
+        setDemo({
+          ...parsed.demo,
+          rrnUnmaskAudit: (parsed.demo.rrnUnmaskAudit ?? []).map((a) => ({
             ...a,
             roleCode: (normalizeRoleCode((a as any).roleCode) ?? "SYS") as RoleCode,
           })),
-        } as HospitalState;
+        });
+
+        // [B-1] 세션 슬라이스 복원
+        const normalizedSession: UserSession | null = parsed.session
+          ? {
+              ...parsed.session,
+              role: (normalizeRoleCode((parsed.session as any).role) ?? "SYS") as RoleCode,
+              authSource: parsed.session.authSource === "server" ? "server" : "demo",
+            }
+          : null;
 
         // [ADDED] 실서버 세션 토큰 유효성 검증
         // authSource="server" 복원 시 /auth/me 호출 → 실패면 즉시 세션 초기화
         // 이유: 만료된 토큰을 그대로 복원하면 페이지 진입 즉시 401 루프 발생
-        if (normalized.session?.authSource === "server") {
+        if (normalizedSession?.authSource === "server") {
           const tokens = loadStoredAuthTokens();
           if (tokens?.accessToken) {
             try {
@@ -212,35 +227,32 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
               );
               const me = await Promise.race([meAuth(), timeout]);
               // 토큰 유효 → 세션 최신 정보로 갱신 후 유지
-              setState({
-                ...normalized,
-                session: {
-                  ...normalized.session,
-                  role: me.role,
-                  displayName: me.displayName,
-                  username: me.username,
-                  accessToken: tokens.accessToken,
-                  tokenType: "Bearer",
-                  authSource: "server",
-                  doctorStaffId: me.staffId,
-                },
+              setSession({
+                ...normalizedSession,
+                role: me.role,
+                displayName: me.displayName,
+                username: me.username,
+                accessToken: tokens.accessToken,
+                tokenType: "Bearer",
+                authSource: "server",
+                doctorStaffId: me.staffId,
               });
               return; // finally에서 hydrated=true 처리
             } catch {
               // [ADDED] 토큰 만료/검증 실패 → 세션 초기화 (401 루프 차단)
               clearStoredAuthTokens();
-              setState({ ...normalized, session: null });
+              setSession(null);
               return;
             }
           } else {
             // 토큰 자체 없음 → 세션 초기화
-            setState({ ...normalized, session: null });
+            setSession(null);
             return;
           }
         }
 
         // demo 세션 또는 session=null → 그대로 복원
-        setState(normalized);
+        setSession(normalizedSession);
       } catch {
         // localStorage 파싱 오류 → 기본 seed 상태 유지
       } finally {
@@ -253,38 +265,37 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // [B-1] { session, demo } 2-슬라이스 영속. accessToken은 제외(보안).
     try {
-      const persistable = state.session
-        ? { ...state, session: { ...state.session, accessToken: undefined } }
-        : state;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(persistable));
+      const persistableSession = session ? { ...session, accessToken: undefined } : null;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ session: persistableSession, demo }));
     } catch {
       // storage may be unavailable
     }
-  }, [state]);
+  }, [session, demo]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const tokens = loadStoredAuthTokens();
     if (!tokens?.accessToken) return;
-    setState((prev) => {
-      if (!prev.session) return prev;
+    setSession((prev) => {
+      if (!prev) return prev;
       return {
         ...prev,
-        session: {
-          ...prev.session,
-          accessToken: tokens.accessToken,
-          tokenType: "Bearer",
-        },
+        accessToken: tokens.accessToken,
+        tokenType: "Bearer",
       };
     });
   }, []);
 
-  const capacity = useMemo(() => buildCapacity(state), [state]);
+  const capacity = useMemo(() => buildCapacity(demo), [demo]);
 
   const patientsById = useMemo(() => {
-    return Object.fromEntries(state.patients.map((p) => [p.id, p]));
-  }, [state.patients]);
+    return Object.fromEntries(demo.patients.map((p) => [p.id, p]));
+  }, [demo.patients]);
+
+  // [B-1] 세션 슬라이스를 안정 참조로 노출 ({ session })
+  const sessionSlice = useMemo<SessionState>(() => ({ session }), [session]);
 
   const guardedCapacity = (delta: number): ActionResult => {
     const next = capacity.current + delta;
@@ -295,7 +306,8 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
 
   const value: HospitalContextValue = {
     hydrated, // [MODIFIED] localStorage 복원 + 토큰 검증 완료 후 true
-    state,
+    state: sessionSlice,
+    demo,
     capacity,
     medicationCatalog: MEDICATION_CATALOG,
     patientsById,
@@ -303,25 +315,22 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       const displayName = role === "DOC" ? "의사 계정" : role === "ADMIN" ? "원무 계정" : "시스템관리자";
       const token = makeMockJwt({ sub: role, role, name: displayName, iat: Date.now() });
       saveStoredAuthTokens({ accessToken: token, tokenType: "Bearer" });
-      setState((prev) => ({ ...prev, session: { role, displayName, username: role.toLowerCase(), accessToken: token, tokenType: "Bearer", authSource: "demo" } }));
+      setSession({ role, displayName, username: role.toLowerCase(), accessToken: token, tokenType: "Bearer", authSource: "demo" });
     },
     loginWithCredentials: ({ username, password }) => {
       const account = MOCK_ACCOUNTS.find((a) => a.username === username && a.password === password);
       if (!account) return { ok: false, message: "아이디 또는 비밀번호가 올바르지 않습니다." };
       const token = makeMockJwt({ sub: account.username, role: account.role, name: account.displayName, iat: Date.now() });
       saveStoredAuthTokens({ accessToken: token, tokenType: "Bearer" });
-      setState((prev) => ({
-        ...prev,
-        session: {
-          role: account.role,
-          displayName: account.displayName,
-          username: account.username,
-          accessToken: token,
-          tokenType: "Bearer",
-          authSource: "demo",
-          doctorStaffId: (account as any).doctorStaffId,
-        },
-      }));
+      setSession({
+        role: account.role,
+        displayName: account.displayName,
+        username: account.username,
+        accessToken: token,
+        tokenType: "Bearer",
+        authSource: "demo",
+        doctorStaffId: (account as any).doctorStaffId,
+      });
       return { ok: true, message: `${account.displayName} 로그인 성공` };
     },
     loginWithServerCredentials: async ({ username, password }) => {
@@ -333,18 +342,15 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
           refreshToken: result.token.refreshToken,
           tokenType: result.token.tokenType,
         });
-        setState((prev) => ({
-          ...prev,
-          session: {
-            role: me.role,
-            displayName: me.displayName,
-            username: me.username || result.user.username,
-            accessToken: result.token.accessToken,
-            tokenType: result.token.tokenType,
-            authSource: "server",
-            doctorStaffId: me.staffId,
-          },
-        }));
+        setSession({
+          role: me.role,
+          displayName: me.displayName,
+          username: me.username || result.user.username,
+          accessToken: result.token.accessToken,
+          tokenType: result.token.tokenType,
+          authSource: "server",
+          doctorStaffId: me.staffId,
+        });
         return { ok: true, message: `${me.displayName} 로그인 성공 (실서버)` };
       } catch (e) {
         const message = e instanceof Error ? e.message : "로그인 실패";
@@ -356,43 +362,41 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       if (!tokens?.accessToken) return { ok: false, message: "저장된 토큰 없음" };
       try {
         const me = await meAuth();
-        setState((prev) => ({
-          ...prev,
-          session: {
-            role: me.role,
-            displayName: me.displayName,
-            username: me.username,
-            accessToken: tokens.accessToken,
-            tokenType: "Bearer",
-            authSource: "server",
-            doctorStaffId: me.staffId,
-          },
-        }));
+        setSession({
+          role: me.role,
+          displayName: me.displayName,
+          username: me.username,
+          accessToken: tokens.accessToken,
+          tokenType: "Bearer",
+          authSource: "server",
+          doctorStaffId: me.staffId,
+        });
         return { ok: true, message: "저장된 로그인 세션 복원 완료" };
       } catch (e) {
         clearStoredAuthTokens();
-        setState((prev) => ({ ...prev, session: null }));
+        setSession(null);
         return { ok: false, message: e instanceof Error ? e.message : "세션 복원 실패" };
       }
     },
-    logout: () => { void logoutAuth().catch(() => clearStoredAuthTokens()); setState((prev) => ({ ...prev, session: null })); },
-    resetDemoData: () => setState(createSeedState()),
+    logout: () => { void logoutAuth().catch(() => clearStoredAuthTokens()); setSession(null); },
+    // [B-1] 데모 데이터 초기화 — 세션도 함께 해제(기존 동작 보존)
+    resetDemoData: () => { setDemo(createSeedDemoState()); setSession(null); },
     setEmergencyCount: (value) => {
       if (!Number.isInteger(value) || value < 0 || value > MAX_EMERGENCY_COUNT) {
         return { ok: false, message: "응급 환자 수는 0~10 범위여야 합니다." };
       }
-      const delta = value - state.emergencyCount;
+      const delta = value - demo.emergencyCount;
       const cap = guardedCapacity(delta);
       if (!cap.ok) return cap;
-      setState((prev) => ({ ...prev, emergencyCount: value }));
+      setDemo((prev) => ({ ...prev, emergencyCount: value }));
       return { ok: true, message: `응급 카운터를 ${value}명으로 변경했습니다.` };
     },
     addReservation: ({ patientId, reservedAt, memo }) => {
-      const patient = state.patients.find((p) => p.id === patientId);
+      const patient = demo.patients.find((p) => p.id === patientId);
       const cap = guardedCapacity(1);
       if (!cap.ok) return cap;
-      const nextId = Math.max(500, ...state.reservations.map(r => r.id)) + 1;
-      setState((prev) => ({
+      const nextId = Math.max(500, ...demo.reservations.map(r => r.id)) + 1;
+      setDemo((prev) => ({
         ...prev,
         reservations: [...prev.reservations, { id: nextId, patientId, reservedAt, status: "RESERVED", memo, contactName: patient?.name, contactPhone: patient?.phone }],
       }));
@@ -402,9 +406,9 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       const cap = guardedCapacity(1);
       if (!cap.ok) return cap;
       if (!name.trim() || !phone.trim() || !reservedAt) return { ok: false, message: "이름/전화번호/예약시간대를 입력해주세요." };
-      const nextPatientId = Math.max(2000, ...state.patients.map((p) => p.id)) + 1;
-      const nextReservationId = Math.max(500, ...state.reservations.map((r) => r.id)) + 1;
-      setState((prev) => ({
+      const nextPatientId = Math.max(2000, ...demo.patients.map((p) => p.id)) + 1;
+      const nextReservationId = Math.max(500, ...demo.reservations.map((r) => r.id)) + 1;
+      setDemo((prev) => ({
         ...prev,
         patients: [...prev.patients, { id: nextPatientId, name: name.trim(), gender: "M", rrnFront: "000000", rrnBack: "1000000", phone: phone.trim() }],
         reservations: [...prev.reservations, { id: nextReservationId, patientId: nextPatientId, reservedAt, status: "RESERVED", contactName: name.trim(), contactPhone: phone.trim(), memo: "신규 예약" }],
@@ -412,9 +416,9 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, message: "신규 예약 등록 완료" };
     },
     updateReservationEntry: (reservationId, payload) => {
-      const target = state.reservations.find((r) => r.id === reservationId);
+      const target = demo.reservations.find((r) => r.id === reservationId);
       if (!target) return { ok: false, message: "예약 정보를 찾을 수 없습니다." };
-      setState((prev) => ({
+      setDemo((prev) => ({
         ...prev,
         reservations: prev.reservations.map((r) => r.id === reservationId ? { ...r, reservedAt: payload.reservedAt, contactName: payload.name.trim(), contactPhone: payload.phone.trim() } : r),
         patients: prev.patients.map((p) => p.id === target.patientId ? { ...p, name: payload.name.trim(), phone: payload.phone.trim() } : p),
@@ -422,13 +426,13 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, message: "예약 수정 완료" };
     },
     addVisit: ({ patientId, visitType }) => {
-      const p = state.patients.find((it) => it.id === patientId);
+      const p = demo.patients.find((it) => it.id === patientId);
       if (!p) return { ok: false, message: "환자 정보를 찾을 수 없습니다." };
       const cap = guardedCapacity(1);
       if (!cap.ok) return cap;
-      const nextId = Math.max(11000, ...state.visits.map(v => v.id)) + 1;
-      const seq = state.visits.filter(v => v.registeredAt.slice(0, 10) === new Date().toISOString().slice(0, 10)).length + 1;
-      setState((prev) => ({
+      const nextId = Math.max(11000, ...demo.visits.map(v => v.id)) + 1;
+      const seq = demo.visits.filter(v => v.registeredAt.slice(0, 10) === new Date().toISOString().slice(0, 10)).length + 1;
+      setDemo((prev) => ({
         ...prev,
         visits: [...prev.visits, { id: nextId, patientId, status: "WAITING", registeredAt: now(), queueNo: `A-${String(seq).padStart(3, "0")}`, visitType }],
         reservations: prev.reservations.map((r) => visitType === "RESERVATION" && r.patientId === patientId && r.status === "RESERVED" ? { ...r, status: "CHECKED_IN" } : r),
@@ -439,16 +443,16 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       if (!patientName.trim() || !rrnFront.trim() || !rrnBack.trim()) return { ok: false, message: "환자명/주민번호를 입력해주세요." };
       const cap = guardedCapacity(1);
       if (!cap.ok) return cap;
-      const targetReservation = reservationId ? state.reservations.find((r) => r.id === reservationId) : undefined;
+      const targetReservation = reservationId ? demo.reservations.find((r) => r.id === reservationId) : undefined;
       let patientId = targetReservation?.patientId;
       if (!patientId) {
-        const existing = state.patients.find((p) => p.name === patientName.trim() && p.phone === phone.trim());
+        const existing = demo.patients.find((p) => p.name === patientName.trim() && p.phone === phone.trim());
         patientId = existing?.id;
       }
-      const nextPatientId = Math.max(2000, ...state.patients.map((p) => p.id)) + 1;
-      const nextVisitId = Math.max(11000, ...state.visits.map((v) => v.id)) + 1;
-      const seq = state.visits.filter(v => v.registeredAt.slice(0, 10) === new Date().toISOString().slice(0, 10)).length + 1;
-      setState((prev) => ({
+      const nextPatientId = Math.max(2000, ...demo.patients.map((p) => p.id)) + 1;
+      const nextVisitId = Math.max(11000, ...demo.visits.map((v) => v.id)) + 1;
+      const seq = demo.visits.filter(v => v.registeredAt.slice(0, 10) === new Date().toISOString().slice(0, 10)).length + 1;
+      setDemo((prev) => ({
         ...prev,
         patients: patientId ? prev.patients.map((p) => p.id === patientId ? { ...p, name: patientName.trim(), gender, rrnFront, rrnBack, phone: phone.trim() } : p) : [...prev.patients, { id: nextPatientId, name: patientName.trim(), gender, rrnFront, rrnBack, phone: phone.trim() }],
         visits: [...prev.visits, { id: nextVisitId, patientId: patientId ?? nextPatientId, status: "WAITING", registeredAt: now(), queueNo: `A-${String(seq).padStart(3, "0")}`, visitType: mode, sourceReservationId: reservationId }],
@@ -457,9 +461,9 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, message: mode === "RESERVATION" ? "예약내원 접수 완료" : "현장 접수 등록 완료" };
     },
     updateVisitEntry: (visitId, payload) => {
-      const visit = state.visits.find((v) => v.id === visitId);
+      const visit = demo.visits.find((v) => v.id === visitId);
       if (!visit) return { ok: false, message: "접수 정보를 찾을 수 없습니다." };
-      setState((prev) => ({
+      setDemo((prev) => ({
         ...prev,
         visits: prev.visits.map((v) => v.id === visitId ? { ...v, status: payload.status } : v),
         patients: prev.patients.map((p) => p.id === visit.patientId ? { ...p, name: payload.patientName.trim(), gender: payload.gender, rrnFront: payload.rrnFront, rrnBack: payload.rrnBack, phone: payload.phone.trim() } : p),
@@ -467,32 +471,32 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, message: "접수 수정 완료" };
     },
     removeVisitEntry: (visitId) => {
-      setState((prev) => ({ ...prev, visits: prev.visits.filter((v) => v.id !== visitId) }));
+      setDemo((prev) => ({ ...prev, visits: prev.visits.filter((v) => v.id !== visitId) }));
       return { ok: true, message: "접수 삭제 완료" };
     },
     updateVisitStatus: (visitId, status) => {
-      const target = state.visits.find((v) => v.id === visitId);
+      const target = demo.visits.find((v) => v.id === visitId);
       if (!target) return { ok: false, message: "접수 정보를 찾을 수 없습니다." };
       if (!isManualVisitTransitionAllowed(target.status, status)) {
         return { ok: false, message: `허용되지 않은 상태 전이 (${target.status} -> ${status}) · 수동 변경은 대기→진료중→완료만 허용` };
       }
       if (target.status === status) return { ok: true, message: "이미 해당 상태입니다." };
-      setState((prev) => ({
+      setDemo((prev) => ({
         ...prev,
         visits: prev.visits.map((v) => (v.id === visitId ? { ...v, status } : v)),
       }));
       return { ok: true, message: "접수 상태 변경 완료" };
     },
     getUnmaskedRrn: (visitId, reason) => {
-      const visit = state.visits.find((v) => v.id === visitId);
+      const visit = demo.visits.find((v) => v.id === visitId);
       if (!visit) return { ok: false, message: "접수 정보를 찾을 수 없습니다." };
-      const patient = state.patients.find((p) => p.id === visit.patientId);
+      const patient = demo.patients.find((p) => p.id === visit.patientId);
       if (!patient) return { ok: false, message: "환자 정보를 찾을 수 없습니다." };
-      const role = state.session?.role;
+      const role = session?.role;
       if (!role || (role !== "ADMIN" && role !== "SYS")) {
         return { ok: false, message: "주민번호 전체보기는 ADMIN/SYS만 가능합니다." };
       }
-      setState((prev) => ({
+      setDemo((prev) => ({
         ...prev,
         rrnUnmaskAudit: [
           ...prev.rrnUnmaskAudit,
@@ -508,7 +512,7 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, rrn: `${patient.rrnFront}-${patient.rrnBack}`, message: "감사로그 기록 후 주민번호 전체보기 제공" };
     },
     saveSoap: (visitId, data) => {
-      setState((prev) => ({
+      setDemo((prev) => ({
         ...prev,
         soaps: {
           ...prev.soaps,
@@ -518,7 +522,7 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, message: "SOAP 저장 완료" };
     },
     saveExamOrders: (visitId, items) => {
-      setState((prev) => ({
+      setDemo((prev) => ({
         ...prev,
         examOrders: { ...prev.examOrders, [visitId]: items },
       }));
@@ -535,7 +539,7 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
         if (nights < 1) return { ok: false, message: "입원 기간은 최소 1박 이상이어야 합니다." };
         draft = { ...draft, admission: { ...draft.admission, nights } };
       }
-      setState((prev) => {
+      setDemo((prev) => {
         const next = {
           ...prev,
           finalOrders: {
@@ -553,10 +557,10 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, message: hasNone ? "NONE 최종오더 저장 + 즉시 완료 처리" : "최종오더 저장 완료" };
     },
     generateInvoiceFromFinalOrder: (visitId) => {
-      const finalOrder = state.finalOrders[visitId];
+      const finalOrder = demo.finalOrders[visitId];
       if (!finalOrder) return { ok: false, message: "최종오더가 없습니다." };
       const items = buildInvoiceItems(finalOrder);
-      const invoiceId = Math.max(9000, ...state.invoices.map((i) => i.invoiceId)) + 1;
+      const invoiceId = Math.max(9000, ...demo.invoices.map((i) => i.invoiceId)) + 1;
       const newInvoice = {
         invoiceId,
         visitId,
@@ -565,7 +569,7 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
         items,
         totalAmount: totalAmount(items),
       };
-      setState((prev) => ({
+      setDemo((prev) => ({
         ...prev,
         invoices: [
           ...prev.invoices.filter((i) => i.visitId !== visitId || i.status === "PAID"),
@@ -575,9 +579,9 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, message: `영수증/청구 생성 완료 (${newInvoice.totalAmount.toLocaleString("ko-KR")}원)` };
     },
     payInvoice: (invoiceId, method) => {
-      const invoice = state.invoices.find((i) => i.invoiceId === invoiceId);
+      const invoice = demo.invoices.find((i) => i.invoiceId === invoiceId);
       if (!invoice) return { ok: false, message: "영수증을 찾을 수 없습니다." };
-      setState((prev) => ({
+      setDemo((prev) => ({
         ...prev,
         invoices: prev.invoices.map((i) =>
           i.invoiceId === invoiceId ? { ...i, status: "PAID", paymentMethod: method, paidAt: now() } : i
@@ -591,7 +595,7 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
     },
     // [MODIFIED] Bug #3 수정: 서버 staffId(>0) 는 그대로 유지, 0일 때만 nextId 발급
     upsertStaff: (staff) => {
-      setState((prev) => {
+      setDemo((prev) => {
         const exists = prev.staff.some((s) => s.staffId === staff.staffId);
         if (exists) {
           return { ...prev, staff: prev.staff.map((s) => (s.staffId === staff.staffId ? staff : s)) };
@@ -607,7 +611,7 @@ export function HospitalProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, message: "직원 프로필 저장 완료" };
     },
     removeStaff: (staffId) => {
-      setState((prev) => ({ ...prev, staff: prev.staff.filter((s) => s.staffId !== staffId) }));
+      setDemo((prev) => ({ ...prev, staff: prev.staff.filter((s) => s.staffId !== staffId) }));
       return { ok: true, message: "직원 프로필 삭제 완료" };
     },
   };
@@ -622,14 +626,14 @@ export function useHospital() {
 }
 
 export function usePatientVisitRows() {
-  const { state, patientsById } = useHospital();
+  const { demo, patientsById } = useHospital();
   return useMemo(
     () =>
-      state.visits
+      demo.visits
         .slice()
         .sort((a, b) => b.id - a.id)
         .map((v) => ({ visit: v, patient: patientsById[v.patientId] })),
-    [state.visits, patientsById]
+    [demo.visits, patientsById]
   );
 }
 

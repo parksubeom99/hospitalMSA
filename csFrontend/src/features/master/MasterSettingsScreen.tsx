@@ -74,7 +74,7 @@ function toStaffProfile(form: FormState): StaffProfile {
 //       SSR(null) vs CSR(복원값) 불일치 → #418/#423/#425 발생
 //       → hydrated 확인 후 이 컴포넌트를 렌더함으로써 SSR DOM = null 보장
 function MasterSettingsContent() {
-  const { state, upsertStaff, removeStaff } = useHospital();
+  const { state, demo, upsertStaff, removeStaff } = useHospital();
   const isServerSession = state.session?.authSource === "server";
   const serverMode = isServerSession;
 
@@ -92,11 +92,11 @@ function MasterSettingsContent() {
   const phoneLastRef = useRef<HTMLInputElement | null>(null);
 
   const rows = useMemo(() => {
-    const source = serverMode ? serverStaff : state.staff;
+    const source = serverMode ? serverStaff : demo.staff;
     return source
       .filter((s) => s.active !== false)
       .filter((s) => (jobFilter === "ALL" ? true : s.jobType === jobFilter));
-  }, [serverMode, serverStaff, state.staff, jobFilter]);
+  }, [serverMode, serverStaff, demo.staff, jobFilter]);
 
   const emit = (msg: string) => {
     setMessage(msg);

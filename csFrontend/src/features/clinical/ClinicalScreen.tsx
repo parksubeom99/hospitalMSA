@@ -11,7 +11,7 @@ import { saveExamOrdersByVisitServer, saveSoapServer } from "@/shared/services/c
 import { useExamOrdersQuery, useSoapQuery, useVisitClinicalStatusListQuery } from "@/shared/services/clinical/clinicalQueries"; // [MODIFIED]
 
 export function ClinicalScreen() {
-  const { state, patientsById, saveSoap, saveExamOrders } = useHospital();
+  const { state, demo, patientsById, saveSoap, saveExamOrders } = useHospital();
   // [MODIFIED] 서버 visit_clinical_status 우선, 로컬 fallback
   const isServerSession = state.session?.authSource === "server";
   const visitClinicalListQuery = useVisitClinicalStatusListQuery({ enabled: isServerSession });
@@ -26,15 +26,15 @@ export function ClinicalScreen() {
       return visitClinicalListQuery.data!.map(s => ({
         id: s.visitId,
         status: s.clinicalStatus,
-        patientId: state.visits.find(v => v.id === s.visitId)?.patientId ?? 0,
+        patientId: demo.visits.find(v => v.id === s.visitId)?.patientId ?? 0,
         patientName: s.patientName, // [FIXED B3] 서버 이름 보존
       }));
     }
-    return state.visits
+    return demo.visits
       .filter(v => v.status !== "COMPLETED")
       .sort((a, b) => b.id - a.id)
       .map(v => ({ id: v.id, status: v.status, patientId: v.patientId, patientName: undefined }));
-  }, [isServerVisitData, visitClinicalListQuery.data, state.visits]);
+  }, [isServerVisitData, visitClinicalListQuery.data, demo.visits]);
 
   const [visitId, setVisitId] = useState<number>(0);
 
@@ -44,7 +44,7 @@ export function ClinicalScreen() {
       setVisitId(activeVisits[0].id);
     }
   }, [activeVisits]);
-  const currentSoap = state.soaps[visitId];
+  const currentSoap = demo.soaps[visitId];
   const [soap, setSoap] = useState({
     subjective: "",
     objective: "",
@@ -70,8 +70,8 @@ export function ClinicalScreen() {
       assessment: currentSoap?.assessment ?? "",
       plan: currentSoap?.plan ?? "",
     });
-    setSelectedItems(state.examOrders[visitId] ?? []);
-  }, [visitId, currentSoap, state.examOrders]);
+    setSelectedItems(demo.examOrders[visitId] ?? []);
+  }, [visitId, currentSoap, demo.examOrders]);
 
   const visit = activeVisits.find((v) => v.id === visitId);
   const patient = visit ? patientsById[visit.patientId] : undefined;
