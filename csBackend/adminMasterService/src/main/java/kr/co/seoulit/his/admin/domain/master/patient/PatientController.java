@@ -1,5 +1,7 @@
 package kr.co.seoulit.his.admin.domain.master.patient;
 
+import kr.co.seoulit.his.admin.domain.master.patient.dto.PatientResolveRequest;
+import kr.co.seoulit.his.admin.domain.master.patient.dto.PatientResolveResponse;
 import kr.co.seoulit.his.admin.domain.master.patient.dto.PatientResponse;
 import kr.co.seoulit.his.admin.domain.master.patient.dto.PatientUpsertRequest;
 import jakarta.validation.Valid;
@@ -38,5 +40,15 @@ public class PatientController {
     @PostMapping
     public ResponseEntity<PatientResponse> upsert(@Valid @RequestBody PatientUpsertRequest req) {
         return ResponseEntity.ok(service.upsert(req));
+    }
+
+    /**
+     * [B-2] 이름+전화로 환자 조회 후 없으면 생성.
+     * 예) POST /master/patients/resolve  { name, gender, phone, rrnFront, rrnBack }
+     * 프론트엔드의 patientId = Date.now() 임시 ID 발명 구조를 대체한다.
+     */
+    @PostMapping("/resolve")
+    public ResponseEntity<PatientResolveResponse> resolve(@Valid @RequestBody PatientResolveRequest req) {
+        return ResponseEntity.ok(service.resolveByNamePhone(req));
     }
 }

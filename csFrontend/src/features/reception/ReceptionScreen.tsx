@@ -10,7 +10,7 @@ import { formatDateTime, getTodayKST, nowDateTimeRounded } from "@/shared/lib/da
 import { formatRrnMasked, maskName, maskPhone } from "@/shared/lib/masking";
 import { STATUS_LABEL } from "@/shared/config/constants";
 import type { VisitStatus } from "@/shared/types/domain";
-import { cancelReservationServer, cancelVisitServer, checkInReservationServer, createReservationServer, createVisitServer, updateVisitServer, upsertPatientForReception } from "@/shared/services/reception/receptionMutationApi";
+import { cancelReservationServer, cancelVisitServer, checkInReservationServer, createReservationServer, createVisitServer, updateVisitServer, resolvePatientByNamePhone } from "@/shared/services/reception/receptionMutationApi";
 import { updateEmergencyCount } from "@/shared/services/dashboard/dashboardApi";
 import { useReservationsQuery, useVisitsQuery, receptionQueryKeys } from "@/shared/services/reception/receptionQueries";
 import type { SyncedReservationRow } from "@/shared/services/reception/receptionApi";
@@ -155,10 +155,9 @@ export function ReceptionScreen() {
       : reservationForm.reservedAt;
     try {
       if (serverWriteEnabled) {
-        const tempPatientId = Date.now();
-        await upsertPatientForReception({
+        // [B-2] 타임스탬프 임시 ID 제거 — 백엔드 resolve가 채번한 patientId 사용
+        const resolved = await resolvePatientByNamePhone({
           session: state.session ?? undefined,
-          patientId: tempPatientId,
           name: reservationForm.name,
           gender: "M",
           rrnFront: "000000",
@@ -167,7 +166,7 @@ export function ReceptionScreen() {
         });
         await createReservationServer({
           session: state.session ?? undefined,
-          patientId: tempPatientId,
+          patientId: resolved.patientId,
           patientName: reservationForm.name,
           reservedAtIso: iso,
         });
@@ -260,10 +259,9 @@ export function ReceptionScreen() {
           await checkInReservationServer({ session: state.session ?? undefined, reservationId: visitForm.reservationId });
           await reservationsQuery.refetch();
         } else {
-          const tempPatientId = Date.now();
-          await upsertPatientForReception({
+          // [B-2] 타임스탬프 임시 ID 제거 — 백엔드 resolve가 채번한 patientId 사용
+          const resolved = await resolvePatientByNamePhone({
             session: state.session ?? undefined,
-            patientId: tempPatientId,
             name: visitForm.patientName,
             gender: visitForm.gender,
             rrnFront: visitForm.rrnFront,
@@ -272,7 +270,7 @@ export function ReceptionScreen() {
           });
           await createVisitServer({
             session: state.session ?? undefined,
-            patientId: tempPatientId,
+            patientId: resolved.patientId,
             patientName: visitForm.patientName,
             mode: visitForm.mode,
           });
