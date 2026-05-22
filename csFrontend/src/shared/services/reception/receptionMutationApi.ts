@@ -29,6 +29,33 @@ export async function upsertPatientForReception(args: {
   });
 }
 
+/**
+ * [B-2] 이름+전화로 환자를 조회/생성한다. 기존 patientId=Date.now() 방식을 대체.
+ * 신규 환자의 patientId는 백엔드 DB IDENTITY가 채번하며, 응답으로 받아 사용한다.
+ */
+export async function resolvePatientByNamePhone(args: {
+  session?: HeadersInput;
+  name: string;
+  gender: "M" | "F";
+  rrnFront: string;
+  rrnBack: string;
+  phone: string;
+}): Promise<{ patientId: number; name: string; isNew: boolean }> {
+  return fetchJsonWithAuth<{ patientId: number; name: string; isNew: boolean }>(
+    `${ADMIN_BASE}/master/patients/resolve`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        name: args.name.trim(),
+        gender: args.gender,
+        phone: args.phone.trim(),
+        rrnFront: args.rrnFront,
+        rrnBack: args.rrnBack,
+      }),
+    }
+  );
+}
+
 export async function createReservationServer(args: {
   session?: HeadersInput;
   patientId: number;
