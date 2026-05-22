@@ -31,6 +31,7 @@ type VisitForm = {
 export function ReceptionScreen() {
   const {
     state,
+    demo,
     capacity,
     patientsById,
     createReservationEntry,
@@ -71,10 +72,10 @@ export function ReceptionScreen() {
         .filter((r) => r.status === "RESERVED")
         .sort((a, b) => a.reservedAt.localeCompare(b.reservedAt));
     }
-    return state.reservations
+    return demo.reservations
       .filter((r: any) => r.status === "RESERVED")
       .sort((a: any, b: any) => a.reservedAt.localeCompare(b.reservedAt));
-  }, [isServerReservation, reservationsQuery.data, state.reservations]);
+  }, [isServerReservation, reservationsQuery.data, demo.reservations]);
 
   // 접수 목록 — 서버 데이터가 로드되면 빈 배열이라도 사용 (로컬 fallback 차단)
   const isServerData = serverWriteEnabled && Array.isArray(visitsQuery.data);
@@ -85,8 +86,8 @@ export function ReceptionScreen() {
         .filter((v: any) => v.status !== "COMPLETED")
         .sort((a: any, b: any) => b.id - a.id);
     }
-    return state.visits.slice().sort((a: any, b: any) => b.id - a.id);
-  }, [isServerData, visitsQuery.data, state.visits]);
+    return demo.visits.slice().sort((a: any, b: any) => b.id - a.id);
+  }, [isServerData, visitsQuery.data, demo.visits]);
 
   const [visitForm, setVisitForm] = useState<VisitForm>({
     mode: "WALK_IN",
@@ -99,7 +100,7 @@ export function ReceptionScreen() {
   });
   const [editingVisitId, setEditingVisitId] = useState<number | null>(null);
   const [rrnVisible, setRrnVisible] = useState(false);
-  const [emergencyValue, setEmergencyValue] = useState<number>(state.emergencyCount);
+  const [emergencyValue, setEmergencyValue] = useState<number>(demo.emergencyCount);
   const reservationPhoneMidRef = useRef<HTMLInputElement | null>(null);
   const reservationPhoneLastRef = useRef<HTMLInputElement | null>(null);
   const visitPhoneMidRef = useRef<HTMLInputElement | null>(null);
@@ -119,8 +120,8 @@ export function ReceptionScreen() {
   };
 
   useEffect(() => {
-    setEmergencyValue(state.emergencyCount);
-  }, [state.emergencyCount]);
+    setEmergencyValue(demo.emergencyCount);
+  }, [demo.emergencyCount]);
 
   const resetReservationForm = () => {
     setReservationForm({ name: "", phone: "", reservedAt: nowDateTimeRounded() });
@@ -216,7 +217,7 @@ export function ReceptionScreen() {
     const serverR = isServerReservation
       ? (reservationsQuery.data as SyncedReservationRow[]).find((it) => it.id === reservationId)
       : undefined;
-    const localR = state.reservations.find((it: any) => it.id === reservationId);
+    const localR = demo.reservations.find((it: any) => it.id === reservationId);
     const r = localR ?? serverR;
     if (!r) { showToast("예약 정보를 찾을 수 없습니다."); return; }
 
@@ -438,11 +439,11 @@ export function ReceptionScreen() {
                       <select value={visitForm.reservationId ?? ""} onChange={(e) => {
                         const reservationId = Number(e.target.value);
                         // [FIXED v3.4] 서버 모드 우선: reservationsQuery.data에서 찾기 (로컬 reservations는 빈 배열)
-                        // 이전 버그: state.reservations만 참조 → 서버 예약 선택해도 값이 빈 상태
+                        // 이전 버그: demo.reservations만 참조 → 서버 예약 선택해도 값이 빈 상태
                         const serverR = Array.isArray(reservationsQuery.data)
                           ? (reservationsQuery.data as SyncedReservationRow[]).find((it) => it.id === reservationId)
                           : undefined;
-                        const localR = state.reservations.find((it: any) => it.id === reservationId);
+                        const localR = demo.reservations.find((it: any) => it.id === reservationId);
                         const r: any = serverR ?? localR;
                         const p = r?.patientId ? patientsById[r.patientId] : undefined;
                         setVisitForm((s) => ({
@@ -559,7 +560,7 @@ export function ReceptionScreen() {
             <div className="split-grid emergency-grid">
               <GlassCard title="응급 환자 수" subtitle="응급 병상 수동 조정 (운영자 직접 설정)" className="nested-card">
                 <div className="counter-panel">
-                  <div className="counter-big">{state.emergencyCount}명</div>
+                  <div className="counter-big">{demo.emergencyCount}명</div>
                   <input type="range" min={0} max={10} value={emergencyValue} onChange={(e) => setEmergencyValue(Number(e.target.value))} />
                   <div className="counter-actions">
                     <button type="button" onClick={() => setEmergencyValue((v) => Math.max(0, v - 1))}>-1</button>
