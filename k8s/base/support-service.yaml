@@ -1,0 +1,78 @@
+# supportService — 검사/협진 (8184)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: support-service
+  labels:
+    app.kubernetes.io/name: support-service
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: support-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: support-service
+        app.kubernetes.io/part-of: hospitalmsa
+        app.kubernetes.io/component: app
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: support-service
+          image: hospitalmsa/support-service:local
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8184
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secret
+          env:
+            - name: ORACLE_USER
+              value: his_support
+            - name: ORACLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secret
+                  key: ORACLE_PASSWORD
+            - name: IAM_BASE_URL
+              value: http://iam-service:8181
+            - name: ORDER_BASE_URL
+              value: http://clinical-service:8183
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 15
+            failureThreshold: 4
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: support-service
+  labels:
+    app.kubernetes.io/name: support-service
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: app
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: support-service
+  ports:
+    - name: http
+      port: 8184
+      targetPort: http

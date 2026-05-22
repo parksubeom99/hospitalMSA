@@ -1,0 +1,101 @@
+# Zookeeper — hospitalMSA infra layer (kafka 의존)
+# StatefulSet + ClusterIP Service + PVC(data) / log는 emptyDir
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zookeeper-config
+  labels:
+    app.kubernetes.io/name: zookeeper
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: infra
+data:
+  ZOOKEEPER_CLIENT_PORT: "2181"
+  ZOOKEEPER_TICK_TIME: "2000"
+  ZOOKEEPER_4LW_COMMANDS_WHITELIST: "*"
+  TZ: Asia/Seoul
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+  labels:
+    app.kubernetes.io/name: zookeeper
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: infra
+spec:
+  serviceName: zookeeper
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zookeeper
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zookeeper
+        app.kubernetes.io/part-of: hospitalmsa
+        app.kubernetes.io/component: infra
+    spec:
+      # Service명 'zookeeper'로 인한 ZOOKEEPER_* 레거시 env 주입 차단 (cp-kafka와 동일 이슈)
+      enableServiceLinks: false
+      containers:
+        - name: zookeeper
+          image: confluentinc/cp-zookeeper:7.6.0
+          envFrom:
+            - configMapRef:
+                name: zookeeper-config
+          ports:
+            - name: client
+              containerPort: 2181
+          volumeMounts:
+            - name: zookeeper-data
+              mountPath: /var/lib/zookeeper/data
+            - name: zookeeper-log
+              mountPath: /var/lib/zookeeper/log
+          livenessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - echo srvr | nc localhost 2181 | grep -q 'Zookeeper version'
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - echo srvr | nc localhost 2181 | grep -q 'Zookeeper version'
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+      volumes:
+        - name: zookeeper-log
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: zookeeper-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  labels:
+    app.kubernetes.io/name: zookeeper
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: infra
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: zookeeper
+  ports:
+    - name: client
+      port: 2181
+      targetPort: client

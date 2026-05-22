@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hospitalmsa
+description: hospitalMSA — 병원 MSA 전체 스택 (인프라 4 + 백엔드 5 + 프론트 1)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

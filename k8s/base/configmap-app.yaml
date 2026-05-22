@@ -1,0 +1,17 @@
+# 애플리케이션 계층 공통 환경변수 — 백엔드 5종 공유 (Oracle Edition)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  labels:
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: app
+data:
+  SPRING_PROFILES_ACTIVE: oracle
+  ORACLE_HOST: oracle
+  ORACLE_PORT: "1521"
+  ORACLE_SID: XEPDB1
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  TZ: Asia/Seoul
