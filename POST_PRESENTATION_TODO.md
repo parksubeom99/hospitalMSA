@@ -86,7 +86,7 @@
 
 ---
 
-## S-2. Gateway OpenTelemetry 계측 추가 (관측성 완결) 🟡 **부분 완료 (2026-04-24, PR #2 머지)**
+## S-2. Gateway OpenTelemetry 계측 추가 (관측성 완결) 🟢 **완료 (2026-05-22 — S-2-B cross-service 추적 런타임 검증)**
 
 **우선순위**: 🔴 최우선 (README/PPT의 분산 추적 스토리 완성)
 
@@ -109,6 +109,23 @@
 2. **admin/clinical도 HTTP server span을 생성하지 않음** (Kafka publisher span만) — Phase 2-E 시점부터 잠재했던 문제
 
 → 본 PR은 Gateway 측 OTel 추가까지만 마무리. Cross-service waterfall은 S-2-B 후속 PR로 분리.
+
+### S-2-B 검증 결과 (2026-05-22) — 추가 코드 불필요, 런타임 실증 완료
+
+S-2-B 진입 시 git 이력 점검 결과, 위 두 이슈를 막는 설정이 **이미 코드에 존재**했다:
+
+- (a) `traceparent` 전파 → gateway `application.yml`의 `spring.reactor.context-propagation: auto` — **PR #2(`6ee695d`)에 이미 포함**
+- (b) admin/clinical HTTP server span → `management.observations.http.server.requests.enabled=true` — **Phase 2-E(`9029a13`)부터 존재** (TODO 작성 이전)
+
+즉 S-2-B는 작성 시점에 보수적으로 "이관"이라 적혔을 뿐, 실제로는 이미 해결돼 있었다.
+docker-compose 전체 스택을 띄우고 `system` 계정 로그인 → 인증된 요청을 게이트웨이로
+보내 Tempo를 직접 조회해 **cross-service waterfall을 실증**했다:
+
+- 검증 trace `e96fa7cf…`(`/master/patients`), `f204af22…`(`/admin/dashboard/summary`)
+- 각 trace가 `gateway-service` + `admin-master-service` 두 서비스 span을 한 trace로 포함
+- 구조: `gateway-service: http get` → (security filterchain) → `admin-master-service: http get /...` → admin 보안 필터 체인
+- 401 미인증 요청은 게이트웨이 자체 필터에서 차단돼 admin에 도달하지 않으므로,
+  cross-service 검증에는 **유효 JWT 요청이 필수**임을 확인
 
 ### 왜 이 작업을 하는가
 
@@ -134,13 +151,13 @@
 - [x] `docker compose -f docker-compose-oracle.yml build gateway-service` 성공 (PR #2)
 - [x] `docker compose up -d` 후 gateway 정상 기동 (3.3초) — `docker logs psb-gateway` 확인
 - [x] Grafana → Explore → Tempo → Service Name 드롭다운에 `gateway-service` 등장 확인 ✅
-- [ ] 브라우저 → `/admin/dashboard/summary` → Tempo Waterfall에 **Gateway → Admin 2-span chain** — 🔄 **S-2-B PR로 이관**
+- [x] 브라우저 → `/admin/dashboard/summary` → Tempo Waterfall에 **Gateway → Admin 2-span chain** ✅ (2026-05-22 런타임 검증 — 인증 요청 기준)
 - [x] README 분산 추적 섹션에 캡처 추가 (gateway-otel-tempo-3span.png — 6번째 자료)
 
 ### 완료 기준
 
 - [x] Grafana에서 `http get /api/admin/dashboard/summary` 트레이스 클릭 시 `gateway-service` 스팬이 루트로 표시 ✅ (3-span 중첩 trace 확인)
-- [ ] 총 span 수 2개 이상 (Gateway 1 + Admin 1) — 🔄 **S-2-B 이관**: 현재 gateway 단독 trace 3-span. Cross-service chain은 (a) Reactor Netty traceparent 전파 + (b) admin/clinical HTTP server span 활성화 두 작업 필요
+- [x] 총 span 수 2개 이상 (Gateway 1 + Admin 1) ✅ — 2026-05-22 런타임 검증: 인증 요청 1건이 `gateway-service` + `admin-master-service` 두 서비스 span을 한 trace로 생성 (검증 trace `e96fa7cf`, `f204af22`). (a) traceparent 전파·(b) admin HTTP server span 모두 PR #2 / Phase 2-E 시점에 이미 적용돼 있었음 — 추가 코드 불필요
 
 ---
 
