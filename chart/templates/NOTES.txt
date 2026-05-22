@@ -1,0 +1,17 @@
+hospitalMSA 차트가 설치되었습니다 (release: {{ .Release.Name }}).
+
+[중요] Secret은 이 차트에 포함되지 않습니다. 설치 전에 먼저 생성해야 합니다:
+  - oracle-secret (ORACLE_PWD, ORACLE_PASSWORD)
+  - app-secret    (HIS_JWT_SECRET)
+  생성 방법: k8s/base/secret.example.sh 참조
+
+상태 확인:
+  kubectl get pods -l app.kubernetes.io/part-of=hospitalmsa
+
+외부 접속 (로컬 검증용 port-forward):
+  kubectl port-forward svc/gateway-service 8180:8180
+  kubectl port-forward svc/frontend 3000:3000
+
+제거:
+  helm uninstall {{ .Release.Name }}
+  (PVC는 자동 삭제되지 않습니다 — 필요 시 kubectl delete pvc 로 수동 정리)

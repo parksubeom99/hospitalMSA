@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clinical-service
+  labels:
+    app.kubernetes.io/name: clinical-service
+    app.kubernetes.io/component: app
+    {{- include "hospitalmsa.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.clinicalService.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: clinical-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: clinical-service
+        app.kubernetes.io/component: app
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: clinical-service
+          image: {{ .Values.clinicalService.image.repository }}:{{ .Values.clinicalService.image.tag }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8183
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: {{ .Values.secrets.app }}
+          env:
+            - name: ORACLE_USER
+              value: {{ .Values.clinicalService.oracleUser }}
+            - name: ORACLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.oracle }}
+                  key: ORACLE_PASSWORD
+            - name: IAM_BASE_URL
+              value: http://iam-service:8181
+            - name: ADMIN_BASE_URL
+              value: http://admin-master-service:8182
+            - name: SUPPORT_BASE_URL
+              value: http://support-service:8184
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 15
+            failureThreshold: 4
+          {{- with .Values.clinicalService.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clinical-service
+  labels:
+    app.kubernetes.io/name: clinical-service
+    app.kubernetes.io/component: app
+    {{- include "hospitalmsa.commonLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: clinical-service
+  ports:
+    - name: http
+      port: 8183
+      targetPort: http

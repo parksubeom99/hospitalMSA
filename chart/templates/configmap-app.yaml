@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  labels:
+    app.kubernetes.io/component: app
+    {{- include "hospitalmsa.commonLabels" . | nindent 4 }}
+data:
+  {{- toYaml .Values.appConfig | nindent 2 }}

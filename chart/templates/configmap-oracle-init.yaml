@@ -1,0 +1,50 @@
+# Oracle XE 초기화 스크립트 — 4개 서비스 스키마(USER) 생성. 멱등.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oracle-initdb
+  labels:
+    app.kubernetes.io/name: oracle
+    app.kubernetes.io/component: infra
+    {{- include "hospitalmsa.commonLabels" . | nindent 4 }}
+data:
+  01_create_users.sql: |
+    ALTER SESSION SET CONTAINER = XEPDB1;
+
+    BEGIN
+        EXECUTE IMMEDIATE 'CREATE USER his_iam IDENTIFIED BY his_password DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS';
+    EXCEPTION
+        WHEN OTHERS THEN IF SQLCODE != -01920 THEN RAISE; END IF;
+    END;
+    /
+    GRANT CONNECT, RESOURCE, CREATE VIEW, CREATE SESSION TO his_iam;
+    GRANT UNLIMITED TABLESPACE TO his_iam;
+
+    BEGIN
+        EXECUTE IMMEDIATE 'CREATE USER his_admin IDENTIFIED BY his_password DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS';
+    EXCEPTION
+        WHEN OTHERS THEN IF SQLCODE != -01920 THEN RAISE; END IF;
+    END;
+    /
+    GRANT CONNECT, RESOURCE, CREATE VIEW, CREATE SESSION TO his_admin;
+    GRANT UNLIMITED TABLESPACE TO his_admin;
+
+    BEGIN
+        EXECUTE IMMEDIATE 'CREATE USER his_clinical IDENTIFIED BY his_password DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS';
+    EXCEPTION
+        WHEN OTHERS THEN IF SQLCODE != -01920 THEN RAISE; END IF;
+    END;
+    /
+    GRANT CONNECT, RESOURCE, CREATE VIEW, CREATE SESSION TO his_clinical;
+    GRANT UNLIMITED TABLESPACE TO his_clinical;
+
+    BEGIN
+        EXECUTE IMMEDIATE 'CREATE USER his_support IDENTIFIED BY his_password DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS';
+    EXCEPTION
+        WHEN OTHERS THEN IF SQLCODE != -01920 THEN RAISE; END IF;
+    END;
+    /
+    GRANT CONNECT, RESOURCE, CREATE VIEW, CREATE SESSION TO his_support;
+    GRANT UNLIMITED TABLESPACE TO his_support;
+
+    EXIT;

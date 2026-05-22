@@ -1,0 +1,93 @@
+# Oracle XE 21c — hospitalMSA infra layer (MySQL 대체)
+# StatefulSet + ClusterIP Service + PVC. 첫 기동 시 XE DB 생성으로 ~5분 소요.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: oracle
+  labels:
+    app.kubernetes.io/name: oracle
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: infra
+spec:
+  serviceName: oracle
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oracle
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oracle
+        app.kubernetes.io/part-of: hospitalmsa
+        app.kubernetes.io/component: infra
+    spec:
+      containers:
+        - name: oracle
+          image: container-registry.oracle.com/database/express:21.3.0-xe
+          imagePullPolicy: Never
+          env:
+            - name: ORACLE_CHARACTERSET
+              value: AL32UTF8
+            - name: TZ
+              value: Asia/Seoul
+            - name: ORACLE_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secret
+                  key: ORACLE_PWD
+          ports:
+            - name: listener
+              containerPort: 1521
+          volumeMounts:
+            - name: oracle-data
+              mountPath: /opt/oracle/oradata
+            - name: initdb
+              mountPath: /opt/oracle/scripts/startup
+              readOnly: true
+          startupProbe:
+            exec:
+              command: ["/opt/oracle/checkDBStatus.sh"]
+            periodSeconds: 15
+            timeoutSeconds: 20
+            failureThreshold: 40
+          readinessProbe:
+            exec:
+              command: ["/opt/oracle/checkDBStatus.sh"]
+            periodSeconds: 30
+            timeoutSeconds: 20
+            failureThreshold: 5
+          livenessProbe:
+            exec:
+              command: ["/opt/oracle/checkDBStatus.sh"]
+            periodSeconds: 30
+            timeoutSeconds: 20
+            failureThreshold: 5
+      volumes:
+        - name: initdb
+          configMap:
+            name: oracle-initdb
+  volumeClaimTemplates:
+    - metadata:
+        name: oracle-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oracle
+  labels:
+    app.kubernetes.io/name: oracle
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: infra
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: oracle
+  ports:
+    - name: listener
+      port: 1521
+      targetPort: listener

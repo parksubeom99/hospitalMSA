@@ -1,0 +1,74 @@
+# iamService — 인증/감사 (8181). admin/clinical/support가 의존하므로 가장 먼저 배포.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam-service
+  labels:
+    app.kubernetes.io/name: iam-service
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: iam-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: iam-service
+        app.kubernetes.io/part-of: hospitalmsa
+        app.kubernetes.io/component: app
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: iam-service
+          image: hospitalmsa/iam-service:local
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8181
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secret
+          env:
+            - name: ORACLE_USER
+              value: his_iam
+            - name: ORACLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secret
+                  key: ORACLE_PASSWORD
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 15
+            failureThreshold: 4
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iam-service
+  labels:
+    app.kubernetes.io/name: iam-service
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: app
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: iam-service
+  ports:
+    - name: http
+      port: 8181
+      targetPort: http

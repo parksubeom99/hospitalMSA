@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam-service
+  labels:
+    app.kubernetes.io/name: iam-service
+    app.kubernetes.io/component: app
+    {{- include "hospitalmsa.commonLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.iamService.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: iam-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: iam-service
+        app.kubernetes.io/component: app
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: iam-service
+          image: {{ .Values.iamService.image.repository }}:{{ .Values.iamService.image.tag }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8181
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: {{ .Values.secrets.app }}
+          env:
+            - name: ORACLE_USER
+              value: {{ .Values.iamService.oracleUser }}
+            - name: ORACLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.oracle }}
+                  key: ORACLE_PASSWORD
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 15
+            failureThreshold: 4
+          {{- with .Values.iamService.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iam-service
+  labels:
+    app.kubernetes.io/name: iam-service
+    app.kubernetes.io/component: app
+    {{- include "hospitalmsa.commonLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: iam-service
+  ports:
+    - name: http
+      port: 8181
+      targetPort: http

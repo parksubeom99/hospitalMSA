@@ -1,0 +1,80 @@
+# adminMasterService — 마스터/관리 (8182)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: admin-master-service
+  labels:
+    app.kubernetes.io/name: admin-master-service
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: admin-master-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: admin-master-service
+        app.kubernetes.io/part-of: hospitalmsa
+        app.kubernetes.io/component: app
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: admin-master-service
+          image: hospitalmsa/admin-master-service:local
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8182
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secret
+          env:
+            - name: ORACLE_USER
+              value: his_admin
+            - name: ORACLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-secret
+                  key: ORACLE_PASSWORD
+            - name: IAM_BASE_URL
+              value: http://iam-service:8181
+            - name: CLINICAL_BASE_URL
+              value: http://clinical-service:8183
+            - name: SUPPORT_BASE_URL
+              value: http://support-service:8184
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 15
+            failureThreshold: 4
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-master-service
+  labels:
+    app.kubernetes.io/name: admin-master-service
+    app.kubernetes.io/part-of: hospitalmsa
+    app.kubernetes.io/component: app
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: admin-master-service
+  ports:
+    - name: http
+      port: 8182
+      targetPort: http
