@@ -1,6 +1,7 @@
 package kr.co.seoulit.his.clinical.messaging.kafka;
 
 import kr.co.seoulit.his.clinical.domain.visitstatus.VisitClinicalStatusService;
+import kr.co.seoulit.his.clinical.saga.BillingFailedCompensationHandler;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,7 +23,7 @@ import static org.mockito.Mockito.verify;
  * 검증 항목:
  *  ① 정상 BILLING_COMPLETED → visitStatusSvc.markBilled(visitId) 호출 + ProcessedEvent 저장
  *  ② BILLING_COMPLETED 중복 수신 → 모든 처리 건너뜀 (멱등성)
- *  ③ 정상 BILLING_FAILED → visitStatusSvc.markBillingFailed(visitId) 호출 + ProcessedEvent 저장
+ *  ③ 정상 BILLING_FAILED → [A-3] compensationHandler.compensate(visitId, reason) 위임 + ProcessedEvent 저장
  *  ④ BILLING_FAILED 중복 수신 → 모든 처리 건너뜀 (멱등성)
  *
  * 특이사항:
@@ -35,6 +36,7 @@ import static org.mockito.Mockito.verify;
 class BillingCompletedConsumerTest {
 
     @Mock VisitClinicalStatusService visitStatusSvc;
+    @Mock BillingFailedCompensationHandler compensationHandler; // [A-3]
     @Mock ProcessedEventRepository processedRepo;
 
     @InjectMocks
@@ -101,8 +103,8 @@ class BillingCompletedConsumerTest {
     // 테스트 ③: 정상 BILLING_FAILED → markBillingFailed 호출 + ProcessedEvent 저장
     // ─────────────────────────────────────────────────────────────────────────
     @Test
-    @DisplayName("정상 BILLING_FAILED 수신 시 visit_clinical_status가 BILLING_FAILED 상태로 명시 전환되고 ProcessedEvent가 저장된다")
-    void onBillingFailed_Normal_ShouldMarkBillingFailedAndSave() throws Exception {
+    @DisplayName("정상 BILLING_FAILED 수신 시 [A-3] 보상 핸들러에 위임되고 ProcessedEvent가 저장된다")
+    void onBillingFailed_Normal_ShouldDelegateToCompensationHandler() throws Exception {
         // given
         String message = """
                 {
@@ -119,8 +121,8 @@ class BillingCompletedConsumerTest {
         // when
         consumer.onBillingFailed(message);
 
-        // then — markBillingFailed(12002) 1회 호출
-        verify(visitStatusSvc, times(1)).markBillingFailed(12002L);
+        // then — [A-3] 보상 핸들러에 (visitId, reason) 위임 1회
+        verify(compensationHandler, times(1)).compensate(12002L, "DB connection failed");
         // then — markBilled는 호출 안 됨 (FAILED는 BILLED로 가지 않음)
         verify(visitStatusSvc, never()).markBilled(anyLong());
         // then — ProcessedEvent 저장 1회
@@ -149,9 +151,9 @@ class BillingCompletedConsumerTest {
         // when
         consumer.onBillingFailed(message);
 
-        // then — 어떤 상태 전환도 발생 안 함
+        // then — 어떤 처리도 발생 안 함 (보상 핸들러 위임도 없음)
         verify(visitStatusSvc, never()).markBilled(anyLong());
-        verify(visitStatusSvc, never()).markBillingFailed(anyLong());
+        verify(compensationHandler, never()).compensate(anyLong(), any());
         // then — ProcessedEvent save 호출 안 됨
         verify(processedRepo, never()).save(any());
     }

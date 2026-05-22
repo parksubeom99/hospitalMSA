@@ -175,6 +175,22 @@ public class VisitClinicalStatusService {
         log.warn("[VisitClinicalStatus] visitId={} {} → BILLING_FAILED (담당자 수동 재처리 필요)", visitId, cur);
     }
 
+    // [A-3] 청구 실패 자동 보상 — visit를 재청구 가능한 BILLABLE 상태로 복원.
+    // markBillable()의 forward-only 가드(isAfterOrEqual)를 우회하여, BILLING_FAILED 등
+    // 이후 상태에서도 BILLABLE로 되돌린다. BILLED(완료)인 경우만 무시한다.
+    @Transactional
+    public void markBillableForRecovery(Long visitId) {
+        VisitClinicalStatus vcs = initOrGet(visitId);
+        String cur = vcs.getClinicalStatus();
+        if ("BILLED".equalsIgnoreCase(cur)) {
+            log.warn("[VisitClinicalStatus] visitId={} 이미 BILLED — 자동 보상 복원 무시", visitId);
+            return;
+        }
+        vcs.setClinicalStatus("BILLABLE");
+        vcs.setUpdatedAt(LocalDateTime.now());
+        log.info("[VisitClinicalStatus] visitId={} {} → BILLABLE (A-3 자동 보상 복원, 재청구 가능)", visitId, cur);
+    }
+
     // ─── 내부 유틸 ────────────────────────────────────────────
 
     private void transition(Long visitId, String expected, String next) {
