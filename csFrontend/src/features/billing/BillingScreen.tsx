@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { GlassCard } from "@/shared/components/GlassCard";
 import { RoleGate } from "@/shared/components/RoleGate";
 import { useHospital } from "@/shared/store/HospitalStore";
@@ -9,6 +10,7 @@ import { STATUS_LABEL } from "@/shared/config/constants";
 import { buildInvoiceItems, totalAmount } from "@/shared/lib/price";
 import { createInvoiceServer, payInvoiceServer, type BackendInvoice } from "@/shared/services/billingApi";
 import { useInvoicesQuery } from "@/shared/services/billing/billingQueries"; // [ADDED]
+import { dashboardSummaryQueryKey } from "@/shared/services/dashboard/dashboardQueries"; // [ADDED] 수납완료 후 대시보드 invalidate용
 
 function backendInvoiceStatusLabel(status?: string) {
   const x = String(status || "").toUpperCase();
@@ -20,6 +22,7 @@ function backendInvoiceStatusLabel(status?: string) {
 
 export function BillingScreen() {
   const { state, patientsById, generateInvoiceFromFinalOrder, payInvoice, updateVisitStatus } = useHospital();
+  const qc = useQueryClient(); // [ADDED] 수납완료 후 dashboard/reception 즉시 갱신용
 
   // [MODIFIED] COMPLETED 환자를 드롭다운에서 제외
   // 도메인 규칙: 수납 완료(COMPLETED) = 방문 종료. 재선택 방지.
@@ -136,6 +139,16 @@ export function BillingScreen() {
       }
 
       await syncBillingFromServer();
+
+      // [FIXED] 수납 완료 후 대시보드 + 접수 대기 목록 즉시 갱신
+      // 이전 버그: 수납 완료해도 대시보드/접수화면이 캐시(30s staleTime)로 인해
+      //           박영하 환자가 사라지지 않고 계속 표시됨
+      const todayKST = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: dashboardSummaryQueryKey(todayKST) }),
+        qc.invalidateQueries({ queryKey: ["reception", "visits"] }),
+      ]);
+
       emit("실서버 결제 완료 + 방문상태 완료 반영(서버/로컬)");
     } catch (e: any) {
       emit(`결제 서버 처리 실패: ${e?.message || e}`);

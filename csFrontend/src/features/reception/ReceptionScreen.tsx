@@ -47,6 +47,7 @@ export function ReceptionScreen() {
   // [MODIFIED v3.3] date 파라미터 제거 — 오늘뿐 아니라 미래 예약도 목록에 표시
   // 이전 버그: date: today 고정 → 4/23(발표일) 예약 등록 후 화면에 안 뜸
   const reservationsQuery = useReservationsQuery();
+  // [FIXED] 전체 visit 조회 후 클라이언트 필터 (백엔드는 단일 status만 지원)
   const visitsQuery = useVisitsQuery();
 
   const syncLoading = reservationsQuery.isFetching || visitsQuery.isFetching;
@@ -79,7 +80,10 @@ export function ReceptionScreen() {
   const isServerData = serverWriteEnabled && Array.isArray(visitsQuery.data);
   const receptionRows = useMemo(() => {
     if (isServerData) {
-      return [...visitsQuery.data!].sort((a: any, b: any) => b.id - a.id);
+      // [FIXED] COMPLETED/CANCELED 클라이언트 필터 — 수납완료 환자는 접수 목록에서 숨김
+      return [...visitsQuery.data!]
+        .filter((v: any) => v.status !== "COMPLETED")
+        .sort((a: any, b: any) => b.id - a.id);
     }
     return state.visits.slice().sort((a: any, b: any) => b.id - a.id);
   }, [isServerData, visitsQuery.data, state.visits]);

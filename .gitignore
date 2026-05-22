@@ -60,6 +60,17 @@ token.txt
 *.token
 *.secret
 *.pem
+# 환경변수 백업 (.env.aws.backup 등) — S-1 token.txt 사건과 동일 유형
+.env.*.backup
+*.backup
+
+# ── 작업 스크래치 (커밋 금지) ────────────────────────────────
+clinical_log.txt
+repomix-output*.xml
+/check.sql
+/delete.sql
+/fix.sql
+/q[0-9].sql
 
 # ── Claude Code 개인 설정 ────────────────────────────────────
 .claude/
