@@ -3,6 +3,7 @@ package kr.co.seoulit.his.clinical.messaging.kafka;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import kr.co.seoulit.his.clinical.domain.visitstatus.VisitClinicalStatusService;
+import kr.co.seoulit.his.clinical.saga.BillingFailedCompensationHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -15,9 +16,9 @@ import java.time.LocalDateTime;
  * Phase 2: AdminMaster → Clinical BILLING_COMPLETED / BILLING_FAILED 이벤트 수신
  *
  * 성공(BILLING_COMPLETED): VisitClinicalStatus → BILLED
- * 실패(BILLING_FAILED):    VisitClinicalStatus → BILLING_FAILED [MODIFIED]
- *                          담당자 수동 재처리 대기 상태로 명시
- *                          (자동 보상 트랜잭션 없음 — 실제 HIS 운영 패턴)
+ * 실패(BILLING_FAILED):    [A-3] 하이브리드 보상 — BillingFailedCompensationHandler에 위임.
+ *                          임상 상태가 BILLABLE이면 자동 복구(재청구 가능),
+ *                          비정상 상태면 BILLING_FAILED(수동 개입).
  */
 @Slf4j
 @Component
@@ -25,6 +26,7 @@ import java.time.LocalDateTime;
 public class BillingCompletedConsumer {
 
     private final VisitClinicalStatusService visitStatusSvc;
+    private final BillingFailedCompensationHandler compensationHandler; // [A-3]
     private final ProcessedEventRepository processedRepo;
     private final ObjectMapper om = new ObjectMapper();
 
@@ -75,11 +77,11 @@ public class BillingCompletedConsumer {
         long visitId = root.path("payload").path("visitId").asLong();
         String reason = root.path("payload").path("reason").asText("UNKNOWN");
 
-        // [MODIFIED] 로그만 남기던 것 → BILLING_FAILED 상태 명시 전환
-        visitStatusSvc.markBillingFailed(visitId); // [ADDED]
+        // [A-3] 하이브리드 보상 — 자동 복구 / 수동 개입 분기를 핸들러에 위임
+        compensationHandler.compensate(visitId, reason);
 
         processedRepo.save(ProcessedEvent.builder()
                 .eventId(eventId).processedAt(LocalDateTime.now()).build());
-        log.error("[Phase2] BILLING_FAILED 수신 → BILLING_FAILED 상태 전환. visitId={}, reason={}", visitId, reason);
+        log.info("[Phase2][A-3] BILLING_FAILED 수신 → 하이브리드 보상 처리 완료. visitId={}, reason={}", visitId, reason);
     }
 }
