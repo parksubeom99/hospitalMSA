@@ -1,3 +1,4 @@
+import "react-datepicker/dist/react-datepicker.css"; // [B-3] globals.css보다 먼저 — 다크 오버라이드가 이김
 import "@/styles/globals.css";
 import type { Metadata } from "next";
 import { Providers } from "./providers";

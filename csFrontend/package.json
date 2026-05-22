@@ -10,16 +10,18 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.81.5",
+    "date-fns": "^4.2.1",
     "next": "14.2.5",
     "react": "18.2.0",
+    "react-datepicker": "^9.1.0",
     "react-dom": "18.2.0"
   },
   "devDependencies": {
-    "typescript": "5.5.4",
     "@types/node": "20.12.12",
     "@types/react": "18.2.79",
     "@types/react-dom": "18.2.25",
     "eslint": "8.57.0",
-    "eslint-config-next": "14.2.5"
+    "eslint-config-next": "14.2.5",
+    "typescript": "5.5.4"
   }
 }

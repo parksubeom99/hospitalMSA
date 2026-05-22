@@ -54,6 +54,17 @@ export function nowDateTimeRounded(): string {
   return `${y}-${mo}-${day}T${hh}:${mm}`;
 }
 
+// [B-3] Date 객체를 datetime-local 문자열(YYYY-MM-DDTHH:mm, 로컬 시각)로 변환.
+// react-datepicker onChange가 Date를 주므로, 기존 문자열 기반 reservedAt 상태와의 경계 변환에 사용.
+export function toDateTimeLocalString(d: Date): string {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${y}-${mo}-${day}T${hh}:${mm}`;
+}
+
 export function calcNights(admitDate: string, dischargeDate: string): number {
   const a = new Date(admitDate);
   const d = new Date(dischargeDate);
