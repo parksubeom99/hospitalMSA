@@ -950,3 +950,46 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   outline: none;
   box-shadow: 0 0 0 2px rgba(80, 150, 255, 0.22);
 }
+
+/* ===== [B-3] react-datepicker 다크 테마 오버라이드 ===== */
+/* layout.tsx에서 react-datepicker.css를 globals.css보다 먼저 import → 아래 규칙이 이김 */
+.react-datepicker-wrapper { width: 100%; }
+.react-datepicker {
+  background: #0e1e37;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+}
+.react-datepicker__header {
+  background: #102544;
+  border-bottom: 1px solid var(--border);
+}
+.react-datepicker__current-month,
+.react-datepicker-time__header,
+.react-datepicker__day-name,
+.react-datepicker__day,
+.react-datepicker__time-list-item {
+  color: var(--text);
+}
+.react-datepicker__day:hover,
+.react-datepicker__time-list-item:hover {
+  background: rgba(131, 189, 255, 0.22) !important;
+}
+.react-datepicker__day--selected,
+.react-datepicker__day--keyboard-selected,
+.react-datepicker__time-list-item--selected {
+  background: var(--accent-2) !important;
+  color: #07162a !important;
+}
+.react-datepicker__day--disabled,
+.react-datepicker__time-list-item--disabled {
+  color: var(--muted);
+  opacity: .4;
+}
+.react-datepicker__time-container,
+.react-datepicker__time,
+.react-datepicker__time-box {
+  background: #0e1e37;
+}
+.react-datepicker__triangle { display: none; }
+.react-datepicker-popper { z-index: 50; }

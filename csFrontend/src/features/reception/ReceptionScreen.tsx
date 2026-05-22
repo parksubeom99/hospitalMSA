@@ -2,11 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import DatePicker, { registerLocale } from "react-datepicker";
+import { ko } from "date-fns/locale";
 import { GlassCard } from "@/shared/components/GlassCard";
 import { RoleGate } from "@/shared/components/RoleGate";
 import { StatusBadge } from "@/shared/components/StatusBadge";
 import { useHospital } from "@/shared/store/HospitalStore";
-import { formatDateTime, getTodayKST, nowDateTimeRounded } from "@/shared/lib/date";
+import { formatDateTime, getTodayKST, nowDateTimeRounded, toDateTimeLocalString } from "@/shared/lib/date";
+
+// [B-3] react-datepicker 한글 로케일 등록 (모듈 1회)
+registerLocale("ko", ko);
 import { formatRrnMasked, maskName, maskPhone } from "@/shared/lib/masking";
 import { STATUS_LABEL } from "@/shared/config/constants";
 import type { VisitStatus } from "@/shared/types/domain";
@@ -358,7 +363,21 @@ export function ReceptionScreen() {
                 <div className="form-grid tri">
                   <label><span>이름</span><input value={reservationForm.name} onChange={(e) => setReservationForm((s) => ({ ...s, name: e.target.value }))} /></label>
                   <label><span>전화번호</span><div className="phone-split"><input value="010" readOnly /><input ref={reservationPhoneMidRef} inputMode="numeric" maxLength={4} value={reservationPhoneParts.mid} onChange={(e) => { const v = e.target.value; setReservationForm((s) => ({ ...s, phone: joinPhone(v, splitPhone(s.phone).last) })); if (digitsOnly(v).length >= 4) reservationPhoneLastRef.current?.focus(); }} placeholder="1234" /><input ref={reservationPhoneLastRef} inputMode="numeric" maxLength={4} value={reservationPhoneParts.last} onChange={(e) => setReservationForm((s) => ({ ...s, phone: joinPhone(splitPhone(s.phone).mid, e.target.value) }))} placeholder="5678" /></div></label>
-                  <label><span>예약시간대</span><input type="datetime-local" value={reservationForm.reservedAt} min={nowDateTimeRounded().slice(0, 16)} onChange={(e) => setReservationForm((s) => ({ ...s, reservedAt: e.target.value }))} /></label>
+                  <label><span>예약시간대</span>
+                    {/* [B-3] 네이티브 datetime-local → react-datepicker (한글 + 15분 단위 + 선택 즉시 확정) */}
+                    <DatePicker
+                      selected={reservationForm.reservedAt ? new Date(reservationForm.reservedAt) : null}
+                      onChange={(d: Date | null) => { if (d) setReservationForm((s) => ({ ...s, reservedAt: toDateTimeLocalString(d) })); }}
+                      showTimeSelect
+                      timeFormat="HH:mm"
+                      timeIntervals={15}
+                      timeCaption="시간"
+                      dateFormat="yyyy-MM-dd HH:mm"
+                      minDate={new Date()}
+                      locale="ko"
+                      placeholderText="예약 일시 선택"
+                    />
+                  </label>
                 </div>
                 <div className="button-row">
                   <button type="button" className="primary-btn" onClick={handleReservationSave} disabled={!capacity.canRegister}>예약 등록</button>
