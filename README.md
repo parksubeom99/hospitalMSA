@@ -323,6 +323,18 @@ hospitalMSA/
 
 ---
 
+### ADR-006: ArgoCD Full GitOps 채택
+
+- **결정:** Docker Compose → K8s 매니페스트 → Helm 차트 → ArgoCD Application 단계적 진화
+- **이유:** GitOps SSOT 원칙 — Git 커밋이 곧 배포 트리거. 수동 `kubectl` 누락·실수 차단, 클러스터 상태가 항상 Git과 일치
+- **구현:** `syncPolicy.automated` + `prune: true` + `selfHeal: true` 풀 자동화. K8s 시스템 기본값 4종(`volumeMode`, `persistentVolumeClaimRetentionPolicy`, `podManagementPolicy`, `revisionHistoryLimit`)은 `ignoreDifferences`로 분리
+- **트러블슈팅:** `ServerSideApply=true` syncOption이 StatefulSet에서 ArgoCD diff 알고리즘과 마찰을 일으켜 perpetual OutOfSync 발생 → client-side apply로 회귀하여 해결
+- **확인:** `support-service.replicaCount` 1→2 커밋 → ArgoCD ~4분 내 자동 sync 검증 완료
+
+→ 실제 UI 화면: [🚀 GitOps 실증 자료](#-gitops-실증-자료-argocd)
+
+---
+
 ## 📊 분산 추적 실증 자료 (Grafana + Tempo)
 
 Phase 2-E에서 도입한 분산 추적이 실제 작동하는 증거. 각 Trace는 Spring Boot `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp`가 자동 수집하여 Tempo에 저장된 결과를 Grafana Explore에서 시각화한 것.
@@ -371,6 +383,35 @@ Last 1 hour 기준 서비스별 호출 이력. Duration 컬럼으로 Outlier(이
 
 ---
 
+## 🚀 GitOps 실증 자료 (ArgoCD)
+
+Phase 5에서 도입한 ArgoCD Full GitOps가 실제 작동하는 증거. `chart/` 디렉토리의 Helm 차트가 Git SSOT이며, master 브랜치 변경은 ArgoCD가 ~3분 폴링으로 자동 감지·동기화. `argocd/hospitalmsa-application.yaml`로 Application CR 자체도 Git에 선언.
+
+### 1) 초기 상태 — Application 등록 직전
+
+![ArgoCD Empty Applications](docs/image/argocd/argocd_empty.png)
+
+ArgoCD v3.4.2 설치 직후 빈 Applications 화면. 좌측 사이드바에 `Applications / Settings / User Info / Documentation` 4개 항목 — 클러스터에 아직 등록된 GitOps Application 없음.
+
+---
+
+### 2) hospitalmsa Application — Synced/Healthy + 자동 sync 실증
+
+![ArgoCD Synced Tree](docs/image/argocd/argocd_synced.png)
+
+`chart/values.yaml`에서 `supportService.replicaCount: 1 → 2` 커밋·푸시 → **ArgoCD가 ~4분 내 자동 감지 + Sync 실행** → 클러스터에 반영 완료.
+
+화면 핵심 지표:
+- **SYNC STATUS:** Synced to `master (3b72bc6)` — 우리가 푸시한 커밋 SHA와 일치
+- **APP HEALTH:** Healthy · **Auto sync is enabled**
+- **LAST SYNC Comment:** `demo(gitops): support-service replicas 1 → 2 (Phase 5...)` ← 자동 sync를 유발한 그 커밋
+- 좌측 필터: Synced **25** / OutOfSync **0** / Healthy **42** / Degraded **0** / Missing **0**
+- 트리 뷰에 Deployment·StatefulSet·Service·ConfigMap·PVC 노드 펼쳐짐
+
+GitOps 루프 완전 검증: **git push → ArgoCD 폴링 → 자동 sync → 클러스터 반영**. 수동 `kubectl apply` 0회.
+
+---
+
 ## 📈 Phase 현황
 
 | Phase | 내용 | 상태 |
@@ -382,6 +423,8 @@ Last 1 hour 기준 서비스별 호출 이력. Duration 컬럼으로 Outlier(이
 | Phase 2-D | JUnit5 / Mockito 단위 테스트 18개 (Saga 4종 + 회귀) + GitHub Actions CI | ✅ 완료 |
 | Phase 2-E | Grafana + Tempo 분산 추적 Waterfall 확인 | ✅ 완료 |
 | Phase 3 | AWS EC2 + RDS 클라우드 배포 | 🔄 진행 중 |
+| Phase 4 | Docker Compose → K8s 매니페스트 + Helm 차트 마이그레이션 | ✅ 완료 |
+| Phase 5 | ArgoCD Full GitOps (automated + prune + selfHeal) | ✅ 완료 |
 
 ---
 
