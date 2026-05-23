@@ -81,7 +81,7 @@ supportService:
   image:
     repository: hospitalmsa/support-service
     tag: local
-  replicaCount: 1
+  replicaCount: 2
   oracleUser: his_support
   resources: {}
 
