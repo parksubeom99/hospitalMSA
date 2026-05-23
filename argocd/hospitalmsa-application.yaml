@@ -37,7 +37,6 @@ spec:
       prune: true
       selfHeal: true
     syncOptions:
-      - ServerSideApply=true
       - ApplyOutOfSyncOnly=true
 
   # K8s admission이 StatefulSet에 자동 채우는 시스템 기본값들을 drift로 잡지 않도록 무시.
