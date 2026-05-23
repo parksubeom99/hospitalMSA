@@ -40,10 +40,17 @@ spec:
       - ServerSideApply=true
       - ApplyOutOfSyncOnly=true
 
-  # K8s admission이 volumeClaimTemplates에 채우는 기본값(volumeMode: Filesystem)을
-  # drift로 잡지 않도록 무시. 차트에는 명시하지 않는 것이 정상 — K8s 기본 동작.
+  # K8s admission이 StatefulSet에 자동 채우는 시스템 기본값들을 drift로 잡지 않도록 무시.
+  # 차트에 명시하지 않는 것이 정상이며 K8s가 항상 채워넣는 필드:
+  #   - volumeClaimTemplates[].spec.volumeMode = "Filesystem"
+  #   - persistentVolumeClaimRetentionPolicy = {Retain, Retain}
+  #   - podManagementPolicy = "OrderedReady"
+  #   - revisionHistoryLimit = 10
   ignoreDifferences:
     - group: apps
       kind: StatefulSet
       jqPathExpressions:
         - .spec.volumeClaimTemplates[].spec.volumeMode
+        - .spec.persistentVolumeClaimRetentionPolicy
+        - .spec.podManagementPolicy
+        - .spec.revisionHistoryLimit
