@@ -39,3 +39,11 @@ spec:
     syncOptions:
       - ServerSideApply=true
       - ApplyOutOfSyncOnly=true
+
+  # K8s admission이 volumeClaimTemplates에 채우는 기본값(volumeMode: Filesystem)을
+  # drift로 잡지 않도록 무시. 차트에는 명시하지 않는 것이 정상 — K8s 기본 동작.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jqPathExpressions:
+        - .spec.volumeClaimTemplates[].spec.volumeMode
