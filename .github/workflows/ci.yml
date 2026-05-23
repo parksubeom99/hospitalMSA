@@ -82,3 +82,38 @@ jobs:
         with:
           name: clinical-test-report
           path: csBackend/clinicalService/build/reports/tests/test/
+
+  helm-lint:
+    name: Helm 차트 검증 (lint + template)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Helm 설치
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: helm lint
+        run: helm lint chart/
+
+      - name: helm template (렌더링 검증)
+        run: helm template hospitalmsa chart/ --debug > /tmp/rendered.yaml
+
+      - name: 렌더 결과 라인 수 확인 (~900+ 정상)
+        run: |
+          LINES=$(wc -l < /tmp/rendered.yaml)
+          echo "Rendered manifest: $LINES lines"
+          if [ "$LINES" -lt 500 ]; then
+            echo "::error::렌더된 매니페스트가 너무 짧음 ($LINES 줄). 템플릿 누락 의심."
+            exit 1
+          fi
+
+      - name: 렌더 결과 아티팩트 업로드
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: helm-rendered-manifest
+          path: /tmp/rendered.yaml

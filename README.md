@@ -410,6 +410,18 @@ ArgoCD v3.4.2 설치 직후 빈 Applications 화면. 좌측 사이드바에 `App
 
 GitOps 루프 완전 검증: **git push → ArgoCD 폴링 → 자동 sync → 클러스터 반영**. 수동 `kubectl apply` 0회.
 
+#### 운영 노트 — 자동 sync는 영구, UI는 on-demand
+
+- **자동 sync는 `argocd-application-controller` 파드가 24/7 수행** — 클러스터가 살아있는 한 영구. 노트북 부팅 후 Docker Desktop만 켜져 있으면 GitOps 루프는 자동 복구.
+- **UI 접근만 별도 port-forward 필요** — Docker Desktop K8s(kind 기반)는 NodePort/LoadBalancer가 호스트 `localhost`에 자동 노출되지 않음. 따라서 UI 접근은 `kubectl port-forward`로 처리.
+- 자동 재시작 래퍼: `scripts/argocd-portforward.ps1` (Ctrl+C 전까지 무한 재시도, Windows Task Scheduler 등록 가능)
+
+```powershell
+# UI 접근 (admin / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`)
+powershell -ExecutionPolicy Bypass -File scripts\argocd-portforward.ps1
+# → https://localhost:8080
+```
+
 ---
 
 ## 📈 Phase 현황
