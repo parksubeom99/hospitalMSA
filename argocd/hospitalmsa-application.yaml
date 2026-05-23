@@ -1,0 +1,41 @@
+# ArgoCD Application — hospitalMSA Helm 차트
+#
+# 동기화 정책: Full GitOps (Phase 5 회장님 결정)
+#   - automated: git push 즉시 Sync
+#   - prune: true       Git에서 삭제된 리소스를 클러스터에서도 삭제
+#   - selfHeal: true    수동 변경(kubectl edit 등)을 Git 상태로 자동 복원
+#
+# Secret 처리: 차트에 Secret 템플릿 없음 → ArgoCD 관리 대상 외.
+#   app-secret / oracle-secret 은 k8s/base/secret.example.sh 로 별도 사전 생성.
+#
+# 부트스트랩: 본 Application CR 자체는 ArgoCD가 자기 자신을 부트스트랩할 수
+#   없으므로, 최초 1회만 kubectl apply -f argocd/hospitalmsa-application.yaml -n argocd
+#   로 등록한다. 이후 변경은 git push → ArgoCD 가 감지.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hospitalmsa
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/parksubeom99/hospitalMSA.git
+    targetRevision: master
+    path: chart
+    helm:
+      releaseName: hospitalmsa
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - ApplyOutOfSyncOnly=true
