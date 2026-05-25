@@ -195,7 +195,7 @@ gateway-service: http get                (2.54ms) ─ 전체 요청 lifecycle
 | Observability | Grafana, Grafana Tempo, OpenTelemetry (OTLP) |
 | Container | Docker, Docker Compose (10 containers + 2 observability) |
 | Auth | JWT (HMAC-SHA256), RBAC, HttpOnly Cookie |
-| Test | JUnit5, Mockito (18개 단위 테스트, 6개 파일) |
+| Test | JUnit5, Mockito (26개 / 9개 파일 — 비즈니스 25 + 컨텍스트 로드 1) |
 | CI/CD | GitHub Actions (push 시 자동 테스트) |
 | Build | Gradle 8.x, Yarn |
 
@@ -251,10 +251,10 @@ docker compose -f docker-compose-oracle.yml ps
 hospitalMSA/
 ├── csBackend/
 │   ├── gatewayService/       — Spring Cloud Gateway, JWT 검증 필터
-│   ├── iamService/           — 인증·인가, RBAC, RefreshToken
+│   ├── iamService/           — 인증·인가, RBAC, RefreshToken (src/test: 1파일 / 컨텍스트 로드 1)
 │   ├── adminMasterService/   — 접수·예약·청구·환자·대기열
-│   │   └── src/test/         — 6개 파일 / 18 @Test (Saga Consumer + 회귀 방지)
-│   ├── clinicalService/      — 진료·EMR·SOAP·오더·Saga Consumer
+│   │   └── src/test/         — 4개 파일 / 12 @Test (Patient resolve + Saga 진입점 + 회귀 방지)
+│   ├── clinicalService/      — 진료·EMR·SOAP·오더·Saga Consumer (src/test: 4파일 / 13 @Test)
 │   └── supportService/       — 검사·약제·방사선·워크리스트
 ├── csFrontend/               — Next.js 14, React Query, TypeScript
 │   └── src/
@@ -432,7 +432,7 @@ powershell -ExecutionPolicy Bypass -File scripts\argocd-portforward.ps1
 | Phase 2-A | Oracle XE 21c 포팅 + Flyway 4개 서비스 | ✅ 완료 |
 | Phase 2-B | React Query 전 화면 서버 연동 | ✅ 완료 |
 | Phase 2-C | Kafka VISIT_REGISTERED 체인 완성 + 멱등성 처리 | ✅ 완료 |
-| Phase 2-D | JUnit5 / Mockito 단위 테스트 18개 (Saga 4종 + 회귀) + GitHub Actions CI | ✅ 완료 |
+| Phase 2-D | JUnit5 / Mockito 단위 테스트 26개 (Saga 4종 + B-2 환자 resolve + A-3 하이브리드 보상 + 회귀) + GitHub Actions CI | ✅ 완료 |
 | Phase 2-E | Grafana + Tempo 분산 추적 Waterfall 확인 | ✅ 완료 |
 | Phase 3 | AWS EC2 + RDS 클라우드 배포 | 🔄 진행 중 |
 | Phase 4 | Docker Compose → K8s 매니페스트 + Helm 차트 마이그레이션 | ✅ 완료 |
@@ -446,15 +446,20 @@ powershell -ExecutionPolicy Bypass -File scripts\argocd-portforward.ps1
 |-----|-----------|---------|-------------|
 | admin | VisitServiceTest | 4개 | 현장접수 생성, 예약내원 접수, 취소, Outbox 이벤트 발행 |
 | admin | BillingRequestedConsumerTest | 3개 | Saga **수납 진입점** — Invoice 생성 + BILLING_COMPLETED outbox / 멱등성 / 예외 시 BILLING_FAILED 보상 |
+| admin | PatientServiceTest | 3개 | **B-2 환자 resolve** — 이름+전화 일치 시 기존 patientId 재사용(isNew=false) / 불일치 시 DB 채번 신규 생성(isNew=true) / 재호출 멱등성 |
 | admin | ReservationServiceTest | 2개 | **회귀 방지** — 예약내원 체크인 시 status=CHECKED_IN + Visit 자동 매핑 (commit 03d50d6 대응) |
-| clinical | VisitRegisteredConsumerTest | 3개 | Kafka Consumer 멱등성 처리, visit_clinical_status INSERT |
 | clinical | BillingCompletedConsumerTest | 4개 | Saga 종료(BILLED 전환) + BILLING_FAILED 수동 보상 + 양방향 멱등성 |
+| clinical | BillingFailedCompensationHandlerTest | 4개 | **A-3 하이브리드 보상** — BILLABLE 상태 자동 복구 / 비정상 상태 수동 개입 / BILLED 상태 보상 무시 / canAutoRecover 판정 |
+| clinical | VisitRegisteredConsumerTest | 3개 | Kafka Consumer 멱등성 처리, visit_clinical_status INSERT |
 | clinical | DiagnosticOrderCompletedConsumerTest | 2개 | 진단 오더 완결 → markFinalOrderReady + 멱등성 |
-| **합계** | **6개 파일** | **18개** | Saga 핵심 분기 + 회귀 방지 |
+| iam | IamApplicationTests | 1개 | **컨텍스트 로드 검증** — `@SpringBootTest` 스프링 컨텍스트 정상 기동 확인 (비즈니스 로직 외) |
+| **합계** | **9개 파일** | **26개** | Saga 핵심 분기 + 회귀 방지 + 컨텍스트 로드 |
+
+> 합계 26개 = **비즈니스 로직 단위 테스트 25개** (admin 12 + clinical 13) **+ iam 컨텍스트 로드 검증 1개**. 아래 CI 잡 수치는 비즈니스 로직 테스트를 모듈별로 집계한 값이다.
 
 **CI/CD:** `.github/workflows/ci.yml` — `master` 또는 `feature/phase2-oracle` push/PR 시 자동 실행
-- `test-admin-master` 잡: adminMasterService 전체 단위 테스트 (9개 @Test)
-- `test-clinical` 잡: clinicalService 전체 단위 테스트 (9개 @Test)
+- `test-admin-master` 잡: adminMasterService 전체 단위 테스트 (12개 @Test)
+- `test-clinical` 잡: clinicalService 전체 단위 테스트 (13개 @Test)
 
 ---
 
